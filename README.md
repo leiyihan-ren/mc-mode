@@ -81,3 +81,27 @@ python3 scripts/download.py --list
 1. **关于文件体积**：全部客户端约 14.5 GB、全部服务端约 27.1 GB，远超 Git 仓库合理范围，因此本仓库收录**官方索引与直链**而非 jar 文件本体；请用上面的脚本按需下载。
 2. **版权声明**：Minecraft 是 Mojang Studios 的商标，所有 jar 文件版权归 Mojang 所有。本仓库仅提供公开的版本元数据索引与官方下载链接，不重新分发任何游戏文件。
 3. **客户端启动**：远古版本需要对应的 Java 版本（如 rd-* 需 Java 8，1.21.x 需 Java 21），各版本所需 Java 版本已记录在 versions.json 的 `java` 字段中。
+
+## 全量文件归档（Release）
+
+为防止版本提供商停止服务，本仓库的 **Releases → `files-archive`** 提供了已下载文件的全量存档：
+
+| 内容 | 形式 | 大小 |
+|---|---|---|
+| 920 个客户端 jar | `archive-client-part-00` ~ `-07` | 14.5 GB |
+| 全部资源文件（13001 个对象 + 索引） | `archive-assets.tar` | 1.8 GB |
+| 版本 JSON | `archive-versions.tar` | 25 MB |
+| 模组加载器安装包（Fabric/Quilt/Forge/NeoForge） | `archive-modloaders-part-*` | 37 GB |
+| Mojang 官方 JRE（全平台组件） | `archive-java.tar` | 823 MB |
+| 完整性清单 | `MANIFEST-mode.sha256` | — |
+
+**还原方式**：
+
+```bash
+# 下载全部 part 后
+cat archive-client-part-* | tar -xf -        # 得到 client/ assets/ versions/ modloaders/ java/
+sha256sum -c MANIFEST-mode.sha256            # 校验完整性
+```
+
+说明：约 584 个模组加载器的远古安装包已被官方 Maven 仓库永久删除（HTTP 404），
+任何渠道均无法获取，故不在归档内；其余全部文件均可校验通过。
