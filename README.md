@@ -98,9 +98,13 @@ python3 scripts/download.py --list
 **还原方式**：
 
 ```bash
-# 下载全部 part 后
-cat archive-client-part-* | tar -xf -        # 得到 client/ assets/ versions/ modloaders/ java/
-sha256sum -c MANIFEST-mode.sha256            # 校验完整性
+# 下载全部归档文件到同一目录后，按分类分别解包：
+cat archive-client-part-*     | tar -xf -   # 还原 client/
+tar -xf archive-assets.tar                  # 还原 assets/
+tar -xf archive-versions.tar                # 还原 versions/
+cat archive-modloaders-part-* | tar -xf -   # 还原 modloaders/
+tar -xf archive-java.tar                    # 还原 java/
+sha256sum -c MANIFEST-mode.sha256           # 校验完整性（应在 mc-files/ 根目录执行）
 ```
 
 说明：约 584 个模组加载器的远古安装包已被官方 Maven 仓库永久删除（HTTP 404），
