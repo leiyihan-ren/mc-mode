@@ -20,10 +20,10 @@ function DownloadCard({ settings }) {
   })
   const set = (k, v) => setCfg(c => ({ ...c, [k]: v }))
   const items = [
-    { label: 'Linux AppImage', url: RELEASE.appImage, note: '双击即可运行（需 FUSE）' },
-    { label: 'Linux tar.gz', url: RELEASE.tarGz, note: '绿色解压版' },
-    { label: 'Android 原生 APK', url: RELEASE.apk, note: '内置 JRE 17 + GL4ES' },
-    { label: '源码 tar.gz', url: RELEASE.source, note: '完整工程' }
+    { label: 'Linux AppImage', official: RELEASE.appImage, url: RELEASE.mirrorAppImage, note: '双击运行（需 FUSE）' },
+    { label: 'Linux tar.gz', official: RELEASE.tarGz, url: RELEASE.mirrorTarGz, note: '绿色解压版' },
+    { label: 'Android 原生 APK', official: RELEASE.apk, url: RELEASE.mirrorApk, note: '内置 JRE 17 + GL4ES' },
+    { label: '源码 tar.gz', official: RELEASE.source, url: RELEASE.mirrorSource, note: '完整工程' }
   ]
   const doExport = async () => {
     try {
@@ -36,16 +36,19 @@ function DownloadCard({ settings }) {
     <>
       <div className="glass-panel p-6 max-w-3xl border-accent/20">
         <div className="text-sm font-medium text-accent mb-1">⬇️ 下载客户端（GitHub Release 真实直链）</div>
-        <p className="text-xs text-slate-500 mb-4">
-          全部为绝对 https 地址，点击直接跳转到 GitHub Release 资源页；Release 页面：
+        <p className="text-xs text-slate-500 mb-4 leading-relaxed">
+          全部为绝对 https 地址。<b className="text-accent">「加速下载」默认走 gh-proxy 镜像</b>（实测四个资源均返回 206 可下载），
+          「官方直链」为 GitHub Release 原地址（国内网络可能挂起，可复制后用其他工具下载）。
+          Release 页面：
           <button className="text-accent underline ml-1" onClick={() => openDownload(RELEASE.page)}>{RELEASE.page}</button>
         </p>
         <div className="space-y-2">
           {items.map(it => (
             <div key={it.label} className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 bg-base-900/50 border border-white/5 rounded-xl px-4 py-2.5">
               <span className="text-sm text-slate-200 w-40 shrink-0">{it.label}</span>
-              <button className="btn-primary text-xs px-3 py-1.5 shrink-0" onClick={() => openDownload(it.url)}>下载</button>
-              <span className="text-[10px] font-mono text-slate-500 break-all flex-1">{it.url}</span>
+              <button className="btn-primary text-xs px-3 py-1.5 shrink-0" onClick={() => openDownload(it.url)}>加速下载</button>
+              <button className="btn-ghost text-xs px-3 py-1.5 shrink-0" onClick={() => openDownload(it.official)}>官方直链</button>
+              <span className="text-[10px] font-mono text-slate-500 break-all flex-1">{it.official}</span>
               <span className="text-[10px] text-slate-600 shrink-0">{it.note}</span>
             </div>
           ))}

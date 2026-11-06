@@ -389,7 +389,10 @@ function registerIpc(mainWindow) {
       appImage: `${base}/${releaseCfg.assets.appImage}`,
       tarGz: `${base}/${releaseCfg.assets.tarGz}`,
       apk: `${base}/${releaseCfg.assets.apk}`,
-      source: `${base}/${releaseCfg.assets.source}`
+      source: `${base}/${releaseCfg.assets.source}`,
+      mirrorPrefix: releaseCfg.mirror || '',
+      mirrorAppImage: `${releaseCfg.mirror || ''}${base}/${releaseCfg.assets.appImage}`,
+      mirrorApk: `${releaseCfg.mirror || ''}${base}/${releaseCfg.assets.apk}`
     };
   });
   ipcMain.handle('app:openExternal', async (evt, url) => {

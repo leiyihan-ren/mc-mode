@@ -1,6 +1,7 @@
 {
   "repo": "https://github.com/leiyihan-ren/mc-mode",
   "tag": "mc-next-v0.2.0",
+  "mirror": "https://gh-proxy.com/",
   "assets": {
     "appImage": "MC-Next-0.2.0.AppImage",
     "tarGz": "MC-Next-0.2.0.tar.gz",

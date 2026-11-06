@@ -142,7 +142,7 @@ export default function AccountPage() {
 
       <div className="text-[11px] text-slate-600">
         未在电脑上本机登录？桌面版直链：
-        <button className="text-accent underline ml-1" onClick={() => openDownload(RELEASE.appImage)}>{RELEASE.appImage}</button>
+        <button className="text-accent underline ml-1" onClick={() => openDownload(RELEASE.mirrorAppImage)}>{RELEASE.appImage}</button>
       </div>
     </div>
   )
