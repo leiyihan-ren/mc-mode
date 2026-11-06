@@ -1,0 +1,10 @@
+{
+  "repo": "https://github.com/leiyihan-ren/mc-mode",
+  "tag": "mc-next-v0.2.0",
+  "assets": {
+    "appImage": "MC-Next-0.2.0.AppImage",
+    "tarGz": "MC-Next-0.2.0.tar.gz",
+    "apk": "MC-Next-Native-0.2.0.apk",
+    "source": "mc-next-source-0.2.0.tar.gz"
+  }
+}

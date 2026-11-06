@@ -1,0 +1,6 @@
+// MC-Next Android 原生工程（非 WebView 壳）
+// 构建链路: NDK r27c + CMake 3.22.1 (externalNativeBuild) -> AGP 8.13.0 -> assembleDebug
+plugins {
+    id 'com.android.application' version '8.13.0' apply false
+}
+tasks.register('clean', Delete) { delete rootProject.buildDir }

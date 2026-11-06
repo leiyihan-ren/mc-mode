@@ -1,0 +1,59 @@
+{
+  "name": "mc-next",
+  "version": "0.2.0",
+  "description": "MC-Next — 现代化 Minecraft 启动器（原版/Forge/Fabric/NeoForge/Quilt 全生态）",
+  "license": "MIT",
+  "main": "electron/main.cjs",
+  "type": "commonjs",
+  "scripts": {
+    "test": "node --test tests/*.test.cjs",
+    "test:e2e": "node tests/e2e/run-e2e.cjs",
+    "dev": "concurrently -k \"npm:dev:renderer\" \"npm:dev:electron\"",
+    "dev:renderer": "vite",
+    "dev:electron": "wait-on tcp:5173 && cross-env NODE_ENV=development electron .",
+    "build:renderer": "vite build",
+    "build": "npm run build:renderer && electron-builder --linux AppImage tar.gz",
+    "start": "electron ."
+  },
+  "dependencies": {
+    "@capacitor/core": "^8.6.0",
+    "adm-zip": "^0.5.16",
+    "axios": "^1.7.9"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "concurrently": "^9.1.2",
+    "cross-env": "^7.0.3",
+    "electron": "^33.4.0",
+    "electron-builder": "^25.1.8",
+    "postcss": "^8.5.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tailwindcss": "^3.4.17",
+    "vite": "^6.0.7",
+    "wait-on": "^8.0.1"
+  },
+  "build": {
+    "appId": "com.mcnext.launcher",
+    "productName": "MC-Next",
+    "artifactName": "MC-Next-${version}.${ext}",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "electron/**/*",
+      "engine/**/*",
+      "config/**/*",
+      "dist/**/*",
+      "package.json"
+    ],
+    "linux": {
+      "target": [
+        "AppImage",
+        "tar.gz"
+      ],
+      "category": "Game"
+    }
+  }
+}

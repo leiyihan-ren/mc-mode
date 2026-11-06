@@ -1,0 +1,24 @@
+# 依赖与构建产物
+node_modules/
+dist/
+release/
+*.log
+
+# Android Gradle / CMake / APK 中间产物
+android/.gradle/
+android/build/
+android/app/build/
+android/app/.cxx/
+android/local.properties
+
+# 运行时资产（由 tools/fetch-runtime.py 从公开来源可复现地重新生成，不入库）
+android/runtime/download/
+android/app/src/main/jniLibs/
+android/app/src/main/assets/runtime/
+
+# 旧的 Capacitor WebView 壳（已废弃，保留本地但不纳入新原生工程）
+android-build/
+
+# 本地状态
+.DS_Store
+.env

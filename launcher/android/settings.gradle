@@ -1,0 +1,20 @@
+pluginManagement {
+    repositories {
+        maven { url 'https://mirrors.cloud.tencent.com/nexus/repository/maven-public/' }
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+dependencyResolutionManagement {
+    // PREFER_SETTINGS：兼容全局 init.gradle 注入的 project 级镜像仓库（不报错），
+    // 同时保证依赖解析统一走此处声明的有序仓库列表。
+    repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
+    repositories {
+        maven { url 'https://mirrors.cloud.tencent.com/nexus/repository/maven-public/' }
+        google()
+        mavenCentral()
+    }
+}
+rootProject.name = 'MC-Next-Native'
+include ':app'

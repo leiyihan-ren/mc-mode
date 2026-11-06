@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "abi": "arm64-v8a",
+  "jre": {
+    "url": "https://github.com/PojavLauncherTeam/android-openjdk-build-multiarch/releases/download/jre17-ec28559/jre17-arm64-20210825-release.tar.xz",
+    "archive": "runtime/download/jre17-android.tar.xz",
+    "sha256": "c64583ac2e0ec8857e43456fa9adcf482c6a8e454a7133173bf15692d2478b8d",
+    "bytes": 38065004,
+    "jre_so_count": 33,
+    "jre_data_files": 110,
+    "jre_data_bytes": 140897360
+  },
+  "render_libs": {
+    "source": "https://gh-proxy.com/https://github.com/PojavLauncherTeam/PojavLauncher/releases/download/gladiolus/PojavLauncher.apk",
+    "note": "APK lib/arm64-v8a/ 下真实 GL4ES/LWJGL/OpenAL/freetype/OSMesa/Vulkan natives",
+    "render_so_count": 19,
+    "render_so_bytes": 28733408
+  },
+  "jniLibs_total": 52,
+  "assets_runtime_total": 110
+}

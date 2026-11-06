@@ -1,0 +1,55 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.mcnext.launcher'
+    compileSdk 36
+    ndkVersion '27.0.12077973'
+
+    defaultConfig {
+        applicationId 'com.mcnext.launcher'
+        minSdk 26
+        targetSdk 36
+        versionCode 2
+        versionName '0.2.0-native'
+        // JNI 由 CMake 编译为真实 .so，随 APK 一起安装到 nativeLibraryDir
+        externalNativeBuild {
+            cmake { arguments '-DANDROID_STL=c++_shared'; cppFlags '-std=c11 -Wall' }
+        }
+        ndk { abiFilters 'arm64-v8a' }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path file('src/main/jni/CMakeLists.txt')
+            version '3.22.1'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    buildTypes {
+        release { minifyEnabled false }
+        debug { jniDebuggable true }
+    }
+
+    testOptions { unitTests.returnDefaultValues = true }
+    sourceSets { main { jniLibs.srcDirs = ['src/main/jniLibs'] } }
+
+    packaging {
+        jniLibs {
+            // JRE 的 libjvm.so 必须用绝对路径 dlopen，安装时须解压到 nativeLibraryDir
+            // （与 AndroidManifest 的 android:extractNativeLibs="true" 配套）
+            useLegacyPackaging = true
+        }
+    }
+}
+
+dependencies {
+    // JVM 层单元测试（纯 Java，无需设备）
+    testImplementation 'junit:junit:4.13.2'
+}

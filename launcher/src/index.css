@@ -1,0 +1,59 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body, #root {
+    @apply h-full m-0 p-0 bg-base-900 text-slate-200 font-display antialiased;
+  }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { @apply bg-base-800; }
+  ::-webkit-scrollbar-thumb { @apply bg-base-500 rounded-full; }
+  ::-webkit-scrollbar-thumb:hover { @apply bg-accent-dim; }
+}
+
+@layer components {
+  .glass-panel {
+    @apply bg-base-800/70 border border-white/5 rounded-2xl shadow-panel backdrop-blur-xs;
+  }
+  .btn {
+    @apply px-4 py-2 rounded-xl font-medium transition-all duration-200 active:scale-95 select-none;
+  }
+  .btn-primary {
+    @apply btn bg-accent/15 text-accent border border-accent/30 hover:bg-accent/25 hover:shadow-glow;
+  }
+  .btn-ghost {
+    @apply btn bg-white/5 text-slate-300 border border-white/10 hover:bg-white/10;
+  }
+  .btn-danger {
+    @apply btn bg-mc-red/15 text-mc-red border border-mc-red/30 hover:bg-mc-red/25;
+  }
+  .tag {
+    @apply px-2 py-0.5 rounded-md text-xs font-medium;
+  }
+  .nav-item {
+    @apply flex items-center gap-3 px-4 py-2.5 rounded-xl cursor-pointer transition-all duration-200 text-slate-400 hover:text-slate-200 hover:bg-white/5;
+  }
+  .nav-item-active {
+    @apply text-accent bg-accent/10 border border-accent/20;
+  }
+  .log-line { @apply px-3 py-0.5 font-mono text-[12.5px] leading-5 whitespace-pre-wrap break-all; }
+  .log-info { @apply text-slate-400; }
+  .log-warn { @apply text-mc-gold; }
+  .log-error { @apply text-mc-red; }
+  .log-success { @apply text-mc-green; }
+
+  /* 模块三：服务端硬核终端（引擎 ansiToHtml + XSS 转义输出） */
+  .mc-log-line { @apply px-3 py-0.5 font-mono text-[12.5px] leading-5 whitespace-pre-wrap break-all text-slate-300; }
+  .mc-log-time { @apply text-slate-600; }
+  .mc-log-thread { @apply text-cyan-400; }
+  .mc-log-logger { @apply text-violet-400; }
+  .mc-log-warn, .mc-log-warning { @apply text-mc-gold; }
+  .mc-log-error, .mc-log-fatal { @apply text-mc-red; }
+  .mc-log-fatal { @apply font-bold; }
+  .mc-log-debug, .mc-log-trace { @apply text-slate-500; }
+}
+
+/* 窗口拖拽区（无标题栏） */
+.drag-region { -webkit-app-region: drag; }
+.no-drag { -webkit-app-region: no-drag; }

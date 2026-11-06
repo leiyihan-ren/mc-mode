@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">MC-Next Native</string>
+    <string name="status_preparing">正在准备 Java 运行时…</string>
+    <string name="status_running">JVM 已启动，等待渲染输出</string>
+    <string name="hint_controls">左侧摇杆移动 · 右侧点击攻击 · A 跳跃 · B 潜行 · START 背包</string>
+</resources>
