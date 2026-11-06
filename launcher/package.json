@@ -1,6 +1,6 @@
 {
   "name": "mc-next",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "MC-Next — 现代化 Minecraft 启动器（原版/Forge/Fabric/NeoForge/Quilt 全生态）",
   "license": "MIT",
   "main": "electron/main.cjs",
@@ -18,7 +18,9 @@
   "dependencies": {
     "@capacitor/core": "^8.6.0",
     "adm-zip": "^0.5.16",
-    "axios": "^1.7.9"
+    "axios": "^1.7.9",
+    "skinview3d": "^3.4.2",
+    "three": "^0.170.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",

@@ -1,0 +1,56 @@
+{
+  "peer_id": 4110229792,
+  "ipv4_addr": "10.144.144.1/24",
+  "proxy_cidrs": [],
+  "hostname": "host-a",
+  "stun_info": {
+    "udp_nat_type": 6,
+    "tcp_nat_type": 6,
+    "last_update_time": 1793970298,
+    "public_ip": [
+      "1.15.155.14",
+      "111.229.52.240",
+      "124.221.73.10"
+    ],
+    "min_port": 11806,
+    "max_port": 40042
+  },
+  "inst_id": "35d88c58-859d-46b0-82e5-1012dd9fdc31",
+  "listeners": [
+    "ring://35d88c58-859d-46b0-82e5-1012dd9fdc31",
+    "tcp://0.0.0.0:11041",
+    "tcp://[::]:11041",
+    "udp://0.0.0.0:11041",
+    "udp://[::]:11041"
+  ],
+  "config": "hostname = \"host-a\"\ninstance_id = \"35d88c58-859d-46b0-82e5-1012dd9fdc31\"\nipv4 = \"10.144.144.1/24\"\nlisteners = [\n    \"tcp://0.0.0.0:11041\",\n    \"udp://0.0.0.0:11041\",\n]\ntcp_whitelist = []\nudp_whitelist = []\n\n[network_identity]\nnetwork_name = \"mcnext-v2\"\nnetwork_secret = \"s2\"\n\n[[peer]]\nuri = \"tcp://127.0.0.1:11042\"\n\n[flags]\nno_tun = true\n",
+  "version": "2.6.4-8428a89d",
+  "feature_flag": {
+    "is_public_server": false,
+    "avoid_relay_data": false,
+    "kcp_input": true,
+    "no_relay_kcp": false,
+    "support_conn_list_sync": true,
+    "quic_input": true,
+    "no_relay_quic": false,
+    "is_credential_peer": false,
+    "need_p2p": false,
+    "disable_p2p": false,
+    "ipv6_public_addr_provider": false
+  },
+  "ip_list": {
+    "public_ipv4": {
+      "addr": 2094876938
+    },
+    "interface_ipv4s": [
+      {
+        "addr": 2887254045
+      }
+    ],
+    "public_ipv6": null,
+    "interface_ipv6s": [],
+    "listeners": []
+  },
+  "public_ipv6_addr": null,
+  "ipv6_public_addr_prefix": null
+}

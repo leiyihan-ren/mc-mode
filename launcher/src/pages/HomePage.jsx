@@ -25,6 +25,7 @@ export default function HomePage({ settings, setSettings, gameRunning, setGameRu
   const [pcStatus, setPcStatus] = useState(null)
   const [remoteMode, setRemoteMode] = useState(false)
   const [message, setMessage] = useState(null)
+  const [recommendedJava, setRecommendedJava] = useState(null)
 
   const javaPath = settings.javaPath || 'java'
   const minMemory = settings.minMemory || '1G'
@@ -64,6 +65,15 @@ export default function HomePage({ settings, setSettings, gameRunning, setGameRu
 
   useEffect(() => {
     if (!selected) return
+    // 模块一：未显式指定 Java 时，询问 Java 管家推荐路径（仅本地扫描，不联网）
+    if (!isMobile && !settings.javaPath) {
+      window.mcnext.javaSelect(selected).then(m => {
+        if (m.ok) setRecommendedJava(m.java.path)
+        else setRecommendedJava(null)
+      }).catch(() => setRecommendedJava(null))
+    } else {
+      setRecommendedJava(null)
+    }
     if (isMobile) {
       // 移动端加载器列表来自云端仓库认知（Fabric/Quilt loader + Forge/NeoForge installer）
       const gen = [
@@ -108,13 +118,15 @@ export default function HomePage({ settings, setSettings, gameRunning, setGameRu
     }
     try {
       const vj = await window.mcnext.getVersionJson(selected)
+      // 未显式指定 Java 时，使用 Java 管家推荐路径（本地匹配，不强制联网下载）
+      const resolvedJava = (!settings.javaPath && recommendedJava) ? recommendedJava : javaPath
       const loaderJar = selectedLoader
         ? `/root/.codebuddy/artifact/2f8a7d30-9c21-4f0b-1d56-08153a6a8000/模组加载器/${selected}/${selectedLoader}`
         : null
       const r = await window.mcnext.launchGame({
         versionId: selected,
         versionJson: vj,
-        javaPath,
+        javaPath: resolvedJava,
         minMemory,
         maxMemory,
         playerName,
@@ -150,7 +162,7 @@ export default function HomePage({ settings, setSettings, gameRunning, setGameRu
             <>
               <div className="glass-panel px-4 py-2 text-sm">
                 <span className="text-slate-500">Java</span>
-                <span className="ml-2 text-slate-300 font-mono">{javaPath}</span>
+                <span className="ml-2 text-slate-300 font-mono">{settings.javaPath || (recommendedJava ? `${recommendedJava}（管家推荐）` : 'java')}</span>
               </div>
               <div className="glass-panel px-4 py-2 text-sm">
                 <span className="text-slate-500">内存</span>

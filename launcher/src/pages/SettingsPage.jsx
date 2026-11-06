@@ -184,6 +184,12 @@ export default function SettingsPage({ settings, setSettings }) {
             <span className="font-mono text-accent w-12 text-right">{s.serverMemory}G</span>
           </div>
         </Field>
+        <Field label="界面主题" hint="夜间护眼模式降低蓝光、压低纯黑对比并暖化文本，适合深夜游玩">
+          <div className="flex gap-2">
+            <button className={`btn text-xs ${!s.theme || s.theme === 'dark' ? 'btn-primary' : 'btn-ghost'}`} onClick={() => update('theme', 'dark')}>深色</button>
+            <button className={`btn text-xs ${s.theme === 'midnight' ? 'btn-primary' : 'btn-ghost'}`} onClick={() => update('theme', 'midnight')}>🌙 夜间护眼</button>
+          </div>
+        </Field>
       </div>
 
       <DownloadCard settings={settings} />

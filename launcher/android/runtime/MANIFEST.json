@@ -13,8 +13,8 @@
   "render_libs": {
     "source": "https://gh-proxy.com/https://github.com/PojavLauncherTeam/PojavLauncher/releases/download/gladiolus/PojavLauncher.apk",
     "note": "APK lib/arm64-v8a/ 下真实 GL4ES/LWJGL/OpenAL/freetype/OSMesa/Vulkan natives",
-    "render_so_count": 19,
-    "render_so_bytes": 28733408
+    "render_so_count": 0,
+    "render_so_bytes": 0
   },
   "jniLibs_total": 52,
   "assets_runtime_total": 110

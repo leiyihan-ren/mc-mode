@@ -1,59 +1,102 @@
+/* 由 design/tokens.json 生成的统一视觉变量（桌面 + 安卓单数据源） */
+@import "./theme.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
   html, body, #root {
-    @apply h-full m-0 p-0 bg-base-900 text-slate-200 font-display antialiased;
+    @apply h-full m-0 p-0 bg-base-900 text-mc-text font-display antialiased;
+    /* 全站颜色平滑过渡，切换深色 / 夜间护眼时不会闪屏 */
+    transition: background-color var(--mc-t-base) var(--mc-t-ease),
+                color var(--mc-t-base) var(--mc-t-ease);
   }
   ::-webkit-scrollbar { width: 8px; height: 8px; }
-  ::-webkit-scrollbar-track { @apply bg-base-800; }
-  ::-webkit-scrollbar-thumb { @apply bg-base-500 rounded-full; }
-  ::-webkit-scrollbar-thumb:hover { @apply bg-accent-dim; }
+  ::-webkit-scrollbar-track { background: var(--mc-bg800); }
+  ::-webkit-scrollbar-thumb { background: var(--mc-bg500); border-radius: 999px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--mc-accent-dim); }
 }
 
 @layer components {
+  /* 玻璃拟态面板：使用 token 的 surface / border，夜间模式自动变暖 */
   .glass-panel {
-    @apply bg-base-800/70 border border-white/5 rounded-2xl shadow-panel backdrop-blur-xs;
+    @apply rounded-2xl border backdrop-blur-xs;
+    background: var(--mc-surface);
+    border-color: var(--mc-border);
+    box-shadow: 0 8px 32px -8px rgba(0, 0, 0, 0.6);
   }
   .btn {
-    @apply px-4 py-2 rounded-xl font-medium transition-all duration-200 active:scale-95 select-none;
+    @apply px-4 py-2 rounded-xl font-medium select-none cursor-pointer;
+    transition: all var(--mc-t-base) var(--mc-t-ease);
   }
+  .btn:active { transform: scale(0.96); }
   .btn-primary {
-    @apply btn bg-accent/15 text-accent border border-accent/30 hover:bg-accent/25 hover:shadow-glow;
+    @apply btn text-accent;
+    background: color-mix(in srgb, var(--mc-accent) 15%, transparent);
+    border: 1px solid color-mix(in srgb, var(--mc-accent) 30%, transparent);
+  }
+  .btn-primary:hover {
+    background: color-mix(in srgb, var(--mc-accent) 25%, transparent);
+    box-shadow: 0 0 24px -4px var(--mc-accent-glow);
   }
   .btn-ghost {
-    @apply btn bg-white/5 text-slate-300 border border-white/10 hover:bg-white/10;
+    @apply btn text-mc-text border;
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.1);
   }
+  .btn-ghost:hover { background: rgba(255, 255, 255, 0.1); }
   .btn-danger {
-    @apply btn bg-mc-red/15 text-mc-red border border-mc-red/30 hover:bg-mc-red/25;
+    @apply btn text-mc-red border;
+    background: color-mix(in srgb, var(--mc-red) 15%, transparent);
+    border-color: color-mix(in srgb, var(--mc-red) 30%, transparent);
   }
+  .btn-danger:hover { background: color-mix(in srgb, var(--mc-red) 25%, transparent); }
   .tag {
     @apply px-2 py-0.5 rounded-md text-xs font-medium;
   }
   .nav-item {
-    @apply flex items-center gap-3 px-4 py-2.5 rounded-xl cursor-pointer transition-all duration-200 text-slate-400 hover:text-slate-200 hover:bg-white/5;
+    @apply flex items-center gap-3 px-4 py-2.5 rounded-xl cursor-pointer transition-colors;
+    transition-duration: var(--mc-t-base);
+    color: var(--mc-text-dim);
   }
+  .nav-item:hover { color: var(--mc-text); background: rgba(255, 255, 255, 0.05); }
   .nav-item-active {
-    @apply text-accent bg-accent/10 border border-accent/20;
+    color: var(--mc-accent);
+    background: color-mix(in srgb, var(--mc-accent) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--mc-accent) 20%, transparent);
   }
   .log-line { @apply px-3 py-0.5 font-mono text-[12.5px] leading-5 whitespace-pre-wrap break-all; }
-  .log-info { @apply text-slate-400; }
+  .log-info { color: var(--mc-text-muted); }
   .log-warn { @apply text-mc-gold; }
   .log-error { @apply text-mc-red; }
   .log-success { @apply text-mc-green; }
 
   /* 模块三：服务端硬核终端（引擎 ansiToHtml + XSS 转义输出） */
-  .mc-log-line { @apply px-3 py-0.5 font-mono text-[12.5px] leading-5 whitespace-pre-wrap break-all text-slate-300; }
-  .mc-log-time { @apply text-slate-600; }
-  .mc-log-thread { @apply text-cyan-400; }
-  .mc-log-logger { @apply text-violet-400; }
+  .mc-log-line { @apply px-3 py-0.5 font-mono text-[12.5px] leading-5 whitespace-pre-wrap break-all; color: var(--mc-text); }
+  .mc-log-time { color: var(--mc-text-dim); }
+  .mc-log-thread { @apply text-mc-cyan; }
+  .mc-log-logger { @apply text-mc-violet; }
   .mc-log-warn, .mc-log-warning { @apply text-mc-gold; }
   .mc-log-error, .mc-log-fatal { @apply text-mc-red; }
   .mc-log-fatal { @apply font-bold; }
-  .mc-log-debug, .mc-log-trace { @apply text-slate-500; }
+  .mc-log-debug, .mc-log-trace { color: var(--mc-text-dim); }
 }
 
 /* 窗口拖拽区（无标题栏） */
 .drag-region { -webkit-app-region: drag; }
 .no-drag { -webkit-app-region: no-drag; }
+
+/* 沉浸式夜间护眼：把既有页面里散落的 slate 文本/面板统一暖化成 token 色，
+   让 [data-theme="midnight"] 真正生效，无需逐页改写。 */
+[data-theme="midnight"] .text-slate-50,
+[data-theme="midnight"] .text-slate-100,
+[data-theme="midnight"] .text-slate-200,
+[data-theme="midnight"] .text-slate-300 { color: var(--mc-text); }
+[data-theme="midnight"] .text-slate-400,
+[data-theme="midnight"] .text-slate-500 { color: var(--mc-text-muted); }
+[data-theme="midnight"] .text-slate-600 { color: var(--mc-text-dim); }
+[data-theme="midnight"] .bg-slate-800,
+[data-theme="midnight"] .bg-slate-900 { background-color: var(--mc-bg800); }
+[data-theme="midnight"] .border-white\/5,
+[data-theme="midnight"] .border-white\/10 { border-color: var(--mc-border); }

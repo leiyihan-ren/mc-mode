@@ -22,6 +22,11 @@ const localJar = require('../engine/localJar.cjs');
 const crashAnalyzer = require('../engine/crash/analyzer.cjs');
 const logCleaner = require('../engine/crash/logCleaner.cjs');
 const { highlight, parseLogLine } = require('../engine/server/console.cjs');
+// —— 生态扩展模块（0.3.0）——
+const javaMgr = require('../engine/java/manager.cjs');
+const lanRoom = require('../engine/net/room.cjs');
+const worldMgr = require('../engine/world/manager.cjs');
+const skinMgr = require('../engine/skin/manager.cjs');
 const releaseCfg = require('../config/release.json');
 
 const HOME = require('os').homedir();
@@ -34,6 +39,12 @@ const REPO_SERVER = '/workspace/MC正式版服务端';
 
 /** 运行状态（模块级单例） */
 const state = { game: null, server: null, mainWindow: null };
+/** 联机大厅管理器（长生命周期，跨 IPC 调用保持同一实例） */
+const netState = { manager: null };
+function getRoomManager() {
+  if (!netState.manager) netState.manager = new lanRoom.RoomManager();
+  return netState.manager;
+}
 
 /** 日志环形缓冲（远程控制台 /api/logs 用，最近 500 条） */
 const logBuf = [];
@@ -54,6 +65,14 @@ async function launchGameCore(opts) {
   try {
     if (state.game && state.game.running) return { ok: false, error: '游戏已在运行' };
     const vj = opts.versionJson;
+    // 模块一：Java 管家自动分配——未显式指定 javaPath 时，扫描本机并匹配 MC 版本所需 Java
+    if (!opts.javaPath) {
+      try {
+        const local = javaMgr.scanLocalJava({ extraRoots: [] });
+        const sel = javaMgr.selectJava(local.list, opts.versionId);
+        if (sel.ok) opts.javaPath = sel.java.path;
+      } catch { /* 扫描失败时退回默认 java */ }
+    }
     const gameJar = path.join(REPO_CLIENT, `${opts.versionId}.jar`);
     const env = {
       os: process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'osx' : 'linux',
@@ -400,6 +419,69 @@ function registerIpc(mainWindow) {
     await shell.openExternal(url);
     return { ok: true };
   });
+
+  // ==================== 模块一：Java 运行环境智能管家 ====================
+  ipcMain.handle('java:scan', async (evt, { extraRoots } = {}) => {
+    const r = javaMgr.scanLocalJava({ extraRoots: extraRoots || [] });
+    return { ok: true, ...r };
+  });
+  ipcMain.handle('java:required', async (evt, mcVersion) => javaMgr.requiredJava(mcVersion));
+  ipcMain.handle('java:select', async (evt, { mcVersion, extraRoots }) => {
+    const local = javaMgr.scanLocalJava({ extraRoots: extraRoots || [] });
+    const picked = javaMgr.selectJava(local.list, mcVersion);
+    return { ...picked, all: local.list };
+  });
+  ipcMain.handle('java:install', async (evt, { major, root } = {}) => {
+    try {
+      const rec = await javaMgr.installJava(major, { root, onProgress: (p) => send('java:progress', p) });
+      return { ok: true, java: rec };
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  // ==================== 模块二：一键联机大厅（EasyTier P2P） ====================
+  ipcMain.handle('lan:binaries', async () => {
+    const b = lanRoom.defaultBinaries();
+    return { ...b, verified: b.core ? await lanRoom.verifyBinary(b.core) : { ok: false, error: '未找到 easytier-core' } };
+  });
+  ipcMain.handle('lan:verify', async (evt, corePath) => lanRoom.verifyBinary(corePath));
+  ipcMain.handle('lan:create', async (evt, opts = {}) => {
+    const { room, inviteCode } = lanRoom.createRoom(opts);
+    return { room, inviteCode };
+  });
+  ipcMain.handle('lan:join', async (evt, { inviteCode, ...opts } = {}) => {
+    const { room, inviteCode: code } = lanRoom.joinRoom(inviteCode, opts);
+    return { room, inviteCode: code };
+  });
+  ipcMain.handle('lan:start', async (evt, { room, ...opts } = {}) => getRoomManager().start(room, opts));
+  ipcMain.handle('lan:stop', async () => getRoomManager().stop());
+  ipcMain.handle('lan:status', async () => {
+    const mgr = getRoomManager();
+    if (!mgr.room) return { connected: false, running: false, virtualIp: null, peers: [], reason: '尚未启动联机' };
+    return mgr.status();
+  });
+  ipcMain.handle('lan:listRooms', async () => {
+    const mgr = getRoomManager();
+    return mgr.listRooms();
+  });
+
+  // ==================== 模块三：本地世界（存档）智能管家 ====================
+  ipcMain.handle('world:list', async (evt, { gameDir } = {}) =>
+    worldMgr.listWorlds(gameDir || GAME_DIR));
+  ipcMain.handle('world:inspect', async (evt, { worldDir, gameDir } = {}) =>
+    worldMgr.inspectWorld(worldDir, { gameDir: gameDir || GAME_DIR }));
+  ipcMain.handle('world:backups', async (evt, { root, world } = {}) =>
+    worldMgr.listBackups(root, world));
+  ipcMain.handle('world:backup', async (evt, { gameDir, world, root, tag, keep } = {}) =>
+    worldMgr.backupWorld(gameDir || GAME_DIR, world, { root, tag, keep }));
+  ipcMain.handle('world:restore', async (evt, { gameDir, world, zipPath, root } = {}) =>
+    worldMgr.restoreWorld(gameDir || GAME_DIR, world, zipPath, { root }));
+
+  // ==================== 模块四：3D 皮肤渲染与外观定制 ====================
+  ipcMain.handle('skin:inspectFile', async (evt, filePath) => skinMgr.loadLocalSkin(filePath));
+  ipcMain.handle('skin:fetchFromAuthlib', async (evt, { apiRoot, playerName } = {}) =>
+    skinMgr.fetchSkinFromAuthlib(apiRoot, playerName));
+  ipcMain.handle('skin:downloadImage', async (evt, { url } = {}) => skinMgr.downloadSkinImage(url));
+  ipcMain.handle('skin:upload', async (evt, opts = {}) => skinMgr.uploadSkin(opts));
 }
 
 module.exports = { registerIpc, state, launchGameCore, logBuf, pushLog, send };

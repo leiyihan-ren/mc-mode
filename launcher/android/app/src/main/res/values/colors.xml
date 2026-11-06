@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 由 tools/gen-tokens.py 从 design/tokens.json 生成 -->
+<resources>
+    <color name="mc_bg900">#0b0f17</color>
+    <color name="mc_bg800">#111827</color>
+    <color name="mc_bg700">#1a2334</color>
+    <color name="mc_bg500">#3b465c</color>
+    <color name="mc_text">#e2e8f0</color>
+    <color name="mc_text_muted">#94a3b8</color>
+    <color name="mc_text_dim">#64748b</color>
+    <color name="mc_accent">#5b9dff</color>
+    <color name="mc_accent_dim">#3b6fc4</color>
+    <color name="mc_green">#4ade80</color>
+    <color name="mc_gold">#fbbf24</color>
+    <color name="mc_red">#f87171</color>
+    <color name="mc_cyan">#22d3ee</color>
+    <color name="mc_violet">#a78bfa</color>
+</resources>

@@ -1,0 +1,63 @@
+/* 由 tools/gen-tokens.py 从 design/tokens.json 生成，请勿手改 */
+:root {
+  --mc-bg900: #0b0f17;
+  --mc-bg900-rgb: 11 15 23;
+  --mc-bg800: #111827;
+  --mc-bg800-rgb: 17 24 39;
+  --mc-bg700: #1a2334;
+  --mc-bg700-rgb: 26 35 52;
+  --mc-bg500: #3b465c;
+  --mc-bg500-rgb: 59 70 92;
+  --mc-surface: rgba(17, 24, 39, 0.72);
+  --mc-border: rgba(255, 255, 255, 0.07);
+  --mc-text: #e2e8f0;
+  --mc-text-rgb: 226 232 240;
+  --mc-text-muted: #94a3b8;
+  --mc-text-muted-rgb: 148 163 184;
+  --mc-text-dim: #64748b;
+  --mc-text-dim-rgb: 100 116 139;
+  --mc-accent: #5b9dff;
+  --mc-accent-rgb: 91 157 255;
+  --mc-accent-dim: #3b6fc4;
+  --mc-accent-dim-rgb: 59 111 196;
+  --mc-accent-glow: rgba(91, 157, 255, 0.35);
+  --mc-green: #4ade80;
+  --mc-green-rgb: 74 222 128;
+  --mc-gold: #fbbf24;
+  --mc-gold-rgb: 251 191 36;
+  --mc-red: #f87171;
+  --mc-red-rgb: 248 113 113;
+  --mc-cyan: #22d3ee;
+  --mc-cyan-rgb: 34 211 238;
+  --mc-violet: #a78bfa;
+  --mc-violet-rgb: 167 139 250;
+  --mc-r-sm: 8px;
+  --mc-r-md: 12px;
+  --mc-r-lg: 16px;
+  --mc-r-xl: 24px;
+  --mc-t-fast: 140ms;
+  --mc-t-base: 220ms;
+  --mc-t-slow: 360ms;
+  --mc-t-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  color-scheme: dark;
+}
+
+/* 沉浸式夜间护眼模式（暖色温、低蓝光、压低对比） */
+[data-theme="midnight"] {
+  --mc-bg900: #100d0c;
+  --mc-bg900-rgb: 16 13 12;
+  --mc-bg800: #17120f;
+  --mc-bg800-rgb: 23 18 15;
+  --mc-bg700: #221a15;
+  --mc-bg700-rgb: 34 26 21;
+  --mc-surface: rgba(23, 18, 15, 0.78);
+  --mc-border: rgba(255, 228, 196, 0.07);
+  --mc-text: #e8d9c5;
+  --mc-text-rgb: 232 217 197;
+  --mc-text-muted: #bfa98f;
+  --mc-text-muted-rgb: 191 169 143;
+  --mc-accent: #e0a568;
+  --mc-accent-rgb: 224 165 104;
+  --mc-accent-dim: #b5814a;
+  --mc-accent-dim-rgb: 181 129 74;
+}

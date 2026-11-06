@@ -10,6 +10,10 @@ import AccountPage from './pages/AccountPage.jsx'
 import ModpackPage from './pages/ModpackPage.jsx'
 import LocalJarPage from './pages/LocalJarPage.jsx'
 import CrashPage from './pages/CrashPage.jsx'
+import JavaManagerPage from './pages/JavaManagerPage.jsx'
+import LobbyPage from './pages/LobbyPage.jsx'
+import WorldManagerPage from './pages/WorldManagerPage.jsx'
+import SkinPage from './pages/SkinPage.jsx'
 import MobileNav from './components/MobileNav.jsx'
 import { isMobile } from './lib/remote.js'
 
@@ -27,6 +31,12 @@ export default function App() {
     localStorage.setItem('mcnext-settings', JSON.stringify(settings))
   }, [settings])
 
+  // 模块五：沉浸式夜间护眼模式（全局 data-theme 切换）
+  useEffect(() => {
+    const theme = settings.theme === 'midnight' ? 'midnight' : 'dark'
+    document.documentElement.setAttribute('data-theme', theme)
+  }, [settings.theme])
+
   useEffect(() => {
     const api = window.mcnext
     if (!api) return
@@ -39,7 +49,9 @@ export default function App() {
   const pages = {
     home: HomePage, download: DownloadPage, console: ConsolePage,
     server: ServerPage, account: AccountPage, modpack: ModpackPage,
-    localjar: LocalJarPage, crash: CrashPage, settings: SettingsPage
+    localjar: LocalJarPage, crash: CrashPage,
+    java: JavaManagerPage, lobby: LobbyPage, world: WorldManagerPage,
+    skin: SkinPage, settings: SettingsPage
   }
   const Page = pages[page] || HomePage
 

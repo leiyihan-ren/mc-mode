@@ -71,6 +71,32 @@ contextBridge.exposeInMainWorld('mcnext', {
   mobileExport: (cfg) => ipcRenderer.invoke('mobile:export', cfg),
   releaseInfo: () => ipcRenderer.invoke('app:release'),
   openExternal: (url) => ipcRenderer.invoke('app:openExternal', url),
+  // 模块一：Java 运行环境智能管家
+  javaScan: () => ipcRenderer.invoke('java:scan'),
+  javaRequired: (mcVersion) => ipcRenderer.invoke('java:required', mcVersion),
+  javaSelect: (mcVersion, extraRoots) => ipcRenderer.invoke('java:select', { mcVersion, extraRoots }),
+  javaInstall: (major, root) => ipcRenderer.invoke('java:install', { major, root }),
+  onJavaProgress: (cb) => ipcRenderer.on('java:progress', (_e, p) => cb(p)),
+  // 模块二：一键联机大厅
+  lanBinaries: () => ipcRenderer.invoke('lan:binaries'),
+  lanVerify: (corePath) => ipcRenderer.invoke('lan:verify', corePath),
+  lanCreate: (opts) => ipcRenderer.invoke('lan:create', opts),
+  lanJoin: (inviteCode, opts) => ipcRenderer.invoke('lan:join', { inviteCode, ...opts }),
+  lanStart: (room, opts) => ipcRenderer.invoke('lan:start', { room, ...opts }),
+  lanStop: () => ipcRenderer.invoke('lan:stop'),
+  lanStatus: () => ipcRenderer.invoke('lan:status'),
+  lanListRooms: () => ipcRenderer.invoke('lan:listRooms'),
+  // 模块三：本地世界（存档）智能管家
+  worldList: (gameDir) => ipcRenderer.invoke('world:list', { gameDir }),
+  worldInspect: (worldDir, gameDir) => ipcRenderer.invoke('world:inspect', { worldDir, gameDir }),
+  worldBackups: (root, world) => ipcRenderer.invoke('world:backups', { root, world }),
+  worldBackup: (gameDir, world, opts) => ipcRenderer.invoke('world:backup', { gameDir, world, ...opts }),
+  worldRestore: (gameDir, world, zipPath, root) => ipcRenderer.invoke('world:restore', { gameDir, world, zipPath, root }),
+  // 模块四：3D 皮肤渲染与外观定制
+  skinInspectFile: (filePath) => ipcRenderer.invoke('skin:inspectFile', filePath),
+  skinFetchFromAuthlib: (apiRoot, playerName) => ipcRenderer.invoke('skin:fetchFromAuthlib', { apiRoot, playerName }),
+  skinDownloadImage: (url) => ipcRenderer.invoke('skin:downloadImage', { url }),
+  skinUpload: (opts) => ipcRenderer.invoke('skin:upload', opts),
   // 平台信息
   platform: process.platform,
   isRoot: typeof process.getuid === 'function' && process.getuid() === 0

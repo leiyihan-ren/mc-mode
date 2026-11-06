@@ -1,0 +1,16 @@
+[
+  {
+    "cidr": "10.144.144.1/24",
+    "ipv4": "10.144.144.1",
+    "hostname": "host-a",
+    "cost": "Local",
+    "lat_ms": "-",
+    "loss_rate": "-",
+    "rx_bytes": "-",
+    "tx_bytes": "-",
+    "tunnel_proto": "-",
+    "nat_type": "Symmetric",
+    "id": "4110229792",
+    "version": "2.6.4-8428a89d"
+  }
+]
