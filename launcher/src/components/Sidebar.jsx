@@ -6,6 +6,7 @@ const NAV = [
   { id: 'account', label: '账号中心', icon: '🔑' },
   { id: 'skin', label: '皮肤外观', icon: '🪪' },
   { id: 'modpack', label: '整合包', icon: '📦' },
+  { id: 'mods', label: '模组管家', icon: '🧩' },
   { id: 'localjar', label: '本地 Jar', icon: '🧬' },
   { id: 'java', label: 'Java 管家', icon: '☕' },
   { id: 'lobby', label: '联机大厅', icon: '🌐' },

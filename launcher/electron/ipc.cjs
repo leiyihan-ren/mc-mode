@@ -10,7 +10,7 @@ const crypto = require('crypto');
 const { GameLauncher, classifyLine, stripAnsi } = require('../engine/launcher');
 const { deployServer, detectJarKind } = require('../engine/serverDeploy');
 const { downloadFile, fetchJson } = require('../engine/http');
-const { OFFICIAL } = require('../engine/sources');
+const { OFFICIAL, SOURCE_POLICY } = require('../engine/sources');
 const { buildClasspath } = require('../engine/library');
 // —— 重构后的四大模块引擎 ——
 const isolation = require('../engine/isolation.cjs');
@@ -27,6 +27,9 @@ const javaMgr = require('../engine/java/manager.cjs');
 const lanRoom = require('../engine/net/room.cjs');
 const worldMgr = require('../engine/world/manager.cjs');
 const skinMgr = require('../engine/skin/manager.cjs');
+// —— 生态扩展模块（0.4.0）——
+const modsMgr = require('../engine/mods/manager.cjs');
+const netGuide = require('../engine/net/guide.cjs');
 const releaseCfg = require('../config/release.json');
 
 const HOME = require('os').homedir();
@@ -44,6 +47,18 @@ const netState = { manager: null };
 function getRoomManager() {
   if (!netState.manager) netState.manager = new lanRoom.RoomManager();
   return netState.manager;
+}
+
+/** 0.4.0：解析模组/资源包所在 gameDir（支持版本隔离实例），默认回落到主游戏目录 */
+function resolveGameDir(o) {
+  const opt = o || {};
+  if (opt.gameDir) {
+    const p = path.resolve(opt.gameDir);
+    if (!path.isAbsolute(p)) throw new Error('gameDir 必须是绝对路径');
+    return p;
+  }
+  if (opt.instanceId) return isolation.gameDirOf(LAUNCHER_DIR, isolation.safeId(opt.instanceId));
+  return GAME_DIR;
 }
 
 /** 日志环形缓冲（远程控制台 /api/logs 用，最近 500 条） */
@@ -153,11 +168,14 @@ function registerIpc(mainWindow) {
     return j;
   });
 
-  // ---------- 下载 ----------
+  // ---------- 下载（0.4.0：BMCLAPI 首选 + 指数退避 + 重试事件） ----------
+  ipcMain.handle('download:sources', async () => SOURCE_POLICY);
   ipcMain.handle('download:start', async (evt, { id, url, dest, sha1, size }) => {
     try {
       const r = await downloadFile(url, dest, {
         expectedSha1: sha1,
+        preferMirror: true,
+        onRetry: (info) => send('download:retry', { id, ...info }),
         onProgress: (received, total) => send('download:progress', { id, received, total })
       });
       send('download:done', { id, sha1: r.sha1, size: r.size });
@@ -344,9 +362,11 @@ function registerIpc(mainWindow) {
   });
 
   // ==================== 模块二：多源并发下载 ====================
-  ipcMain.handle('download:batch', async (evt, { tasks, concurrency }) => {
+  ipcMain.handle('download:batch', async (evt, { tasks, concurrency, preferMirror, backoffBaseMs }) => {
     return downloadBatch(tasks, {
       concurrency: concurrency || 8,
+      preferMirror: preferMirror !== false,
+      ...(backoffBaseMs !== undefined ? { backoffBaseMs } : {}),
       onEvent: (e) => send('download:batch', e)
     });
   });
@@ -482,6 +502,70 @@ function registerIpc(mainWindow) {
     skinMgr.fetchSkinFromAuthlib(apiRoot, playerName));
   ipcMain.handle('skin:downloadImage', async (evt, { url } = {}) => skinMgr.downloadSkinImage(url));
   ipcMain.handle('skin:upload', async (evt, opts = {}) => skinMgr.uploadSkin(opts));
+
+  // ==================== 模块一（0.4.0）：P2P 真实网络配置向导 / 容错诊断 ====================
+  ipcMain.handle('net:guide', async () => netGuide.NETWORK_GUIDE);
+  ipcMain.handle('net:diagnose', async (evt, payload = {}) => {
+    const mgr = getRoomManager();
+    const status = payload.status || await mgr.status();
+    return netGuide.diagnoseHandshake({
+      status,
+      logs: payload.logs || status.logs,
+      elapsedMs: payload.elapsedMs,
+      thresholdMs: payload.thresholdMs,
+      room: payload.room || mgr.room || {}
+    });
+  });
+
+  // ==================== 模块二（0.4.0）：模组与资源包智能管家 ====================
+  ipcMain.handle('mods:list', async (evt, o = {}) => {
+    try {
+      const gameDir = resolveGameDir(o);
+      return { ok: true, gameDir, ...modsMgr.listMods(gameDir) };
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
+  ipcMain.handle('mods:conflicts', async (evt, o = {}) => {
+    try {
+      const gameDir = resolveGameDir(o);
+      const listed = modsMgr.listMods(gameDir);
+      return {
+        ok: true, gameDir,
+        ...modsMgr.detectConflicts(listed.mods, { includeDisabled: !!o.includeDisabled })
+      };
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
+  ipcMain.handle('mods:toggle', async (evt, o = {}) => {
+    try { return modsMgr.toggleMod(resolveGameDir(o), o.file, o.enabled); }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
+  ipcMain.handle('mods:packs', async (evt, o = {}) => {
+    try {
+      const gameDir = resolveGameDir(o);
+      return { ok: true, gameDir, ...modsMgr.listPacks(gameDir) };
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
+  ipcMain.handle('mods:shaderCheck', async (evt, o = {}) => {
+    try {
+      const gameDir = resolveGameDir(o);
+      return {
+        ok: true,
+        ...modsMgr.checkShaderRequirements(modsMgr.listMods(gameDir), modsMgr.listPacks(gameDir))
+      };
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
+  ipcMain.handle('mods:pickPack', async () => {
+    const r = await dialog.showOpenDialog(mainWindow, {
+      title: '选择光影包 / 材质包（.zip）',
+      filters: [{ name: '资源包', extensions: ['zip'] }],
+      properties: ['openFile']
+    });
+    return r.canceled ? null : r.filePaths[0];
+  });
+  ipcMain.handle('mods:import', async (evt, o = {}) => {
+    try {
+      return modsMgr.importPack(resolveGameDir(o), o.kind, o.srcPath, { overwrite: !!o.overwrite });
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
 }
 
 module.exports = { registerIpc, state, launchGameCore, logBuf, pushLog, send };

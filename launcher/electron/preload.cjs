@@ -97,6 +97,20 @@ contextBridge.exposeInMainWorld('mcnext', {
   skinFetchFromAuthlib: (apiRoot, playerName) => ipcRenderer.invoke('skin:fetchFromAuthlib', { apiRoot, playerName }),
   skinDownloadImage: (url) => ipcRenderer.invoke('skin:downloadImage', { url }),
   skinUpload: (opts) => ipcRenderer.invoke('skin:upload', opts),
+  // 模块三（0.4.0）：下载源策略 / 重试事件
+  downloadSources: () => ipcRenderer.invoke('download:sources'),
+  onDownloadRetry: (cb) => ipcRenderer.on('download:retry', (_e, p) => cb(p)),
+  // 模块一（0.4.0）：真实网络配置向导 / 容错诊断
+  netGuide: () => ipcRenderer.invoke('net:guide'),
+  netDiagnose: (payload) => ipcRenderer.invoke('net:diagnose', payload || {}),
+  // 模块二（0.4.0）：模组与资源包智能管家
+  modsList: (o) => ipcRenderer.invoke('mods:list', o || {}),
+  modsConflicts: (o) => ipcRenderer.invoke('mods:conflicts', o || {}),
+  modsToggle: (o) => ipcRenderer.invoke('mods:toggle', o),
+  modsPacks: (o) => ipcRenderer.invoke('mods:packs', o || {}),
+  modsShaderCheck: (o) => ipcRenderer.invoke('mods:shaderCheck', o || {}),
+  modsPickPack: () => ipcRenderer.invoke('mods:pickPack'),
+  modsImport: (o) => ipcRenderer.invoke('mods:import', o),
   // 平台信息
   platform: process.platform,
   isRoot: typeof process.getuid === 'function' && process.getuid() === 0

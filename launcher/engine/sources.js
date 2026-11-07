@@ -71,4 +71,34 @@ function bmclAssetUrl(relPath) {
   return `${BMCL}/assets/${relPath}`;
 }
 
-module.exports = { OFFICIAL, BMCL, mirrorCandidates, bmclJarUrl, bmclAssetUrl };
+/**
+ * 【0.4.0 模块三】镜像优先候选链：BMCLAPI 首选、Mojang 官方源备用。
+ *
+ * 复用 mirrorCandidates 的真实映射规则，不重复维护一份映射表：
+ *   mirrorCandidates(url) = [官方原 URL, BMCLAPI 镜像...]
+ *   mirrorFirstCandidates = [BMCLAPI 镜像..., 官方原 URL]
+ * 无可用镜像时（未知主机 / 已是 BMCLAPI 直链）原样返回 [url]，不做任何编造。
+ */
+function mirrorFirstCandidates(url) {
+  const c = mirrorCandidates(url);
+  if (c.length <= 1) return c;
+  return [...c.slice(1), c[0]];
+}
+
+/** 当前下载源策略（供 UI 展示，真实列出优先级，不含任何假状态） */
+const SOURCE_POLICY = {
+  strategy: 'mirror-first',
+  primary: { id: 'bmclapi', name: 'BMCLAPI', url: BMCL, note: '国内镜像，首选' },
+  fallback: [
+    { id: 'mojang-libraries', name: 'Mojang 官方（依赖库）', url: OFFICIAL.libraries },
+    { id: 'mojang-piston-data', name: 'Mojang 官方（资源对象）', url: OFFICIAL.pistonData },
+    { id: 'mojang-launcher', name: 'Mojang 官方（客户端/服务端）', url: OFFICIAL.launcher }
+  ],
+  retry: '指数退避（exponential backoff），失败逐源切换，SHA-1 校验不通过自动换源',
+  note: 'BMCLAPI 与 Mojang 官方均为真实可用源；顺序由 engine/http.js 的 preferMirror 控制，无网络时如实报错'
+};
+
+module.exports = {
+  OFFICIAL, BMCL, SOURCE_POLICY,
+  mirrorCandidates, mirrorFirstCandidates, bmclJarUrl, bmclAssetUrl
+};

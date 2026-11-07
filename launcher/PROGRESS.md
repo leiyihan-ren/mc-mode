@@ -80,3 +80,33 @@
 - **移动 UI**：底部 Tab 导航（MobileNav）、设置页远程控制区块、控制台远程日志轮询（2s）
 - **回归**：桌面端 smoke 5/5 ✅（React 16933 字符 + IPC 103 客户端）；远程 API 端到端 ✅（status/clients/launch 校验/logs）
 - **产物**：`MC-Next-Mobile-Remote.apk`（4.3 MB，Android 7.0+）
+
+---
+
+## 🌐 生态扩展模块 v0.3.0（2026-11-06）
+
+> 在 0.2.0 全平台原生重构（Electron 桌面 + Android JRE/GL4ES 原生壳）之上平滑扩展五大生态模块。
+
+### 新增模块
+1. **Java 运行环境智能管家** `engine/java/manager.cjs`：MC 版本→Java 主版本映射、本机 JDK 扫描、精确/兼容匹配、缺失时 Adoptium API + 清华镜像 + gh-proxy 下载并 SHA-256 校验解压。接入 `launchGameCore` 自动分配（不强制联网）。
+2. **一键联机大厅** `engine/net/room.cjs`：真实 EasyTier v2.6.4 二进制 + 邀请码 `MCET1.<b64>.<crc>` + `RoomManager` + 真实 CLI `node/peer` 输出解析（虚拟 IP/peers 不伪造）。
+3. **本地世界管家** `engine/world/{nbt,manager}.cjs`：NBT 手写解析、真实游玩时长（stats）、一键备份/回滚（保留 5 份 + pre-restore 快照 + Zip-Slip 防护）。**AI 剧情功能按用户要求已彻底删除**（仅保留扫描/备份回滚）。
+4. **3D 皮肤渲染** `src/components/SkinViewer.jsx` + `engine/skin/manager.cjs`：skinview3d 实时渲染、拖拽旋转/缩放、Authlib-Injector 协议获取、上传需显式 endpoint+token（诚实边界，不伪造成功）。
+5. **UI 多端一致性**：`design/tokens.json` 单一视觉数据源 → `tools/gen-tokens.py` 生成 `src/theme.css` + Android `colors.xml`；Tailwind 改指 CSS 变量（含 `-rgb` 通道以支持透明度修饰符）；沉浸式夜间护眼模式 `data-theme="midnight"`。
+
+### 集成
+- IPC 新增 21 个 handler（`java:* / lan:* / world:* / skin:*`），preload 全量桥接，React 新增 4 页面（JavaManager/Lobby/WorldManager/Skin）。
+- 全量单测 **173/173 通过**（含四大模块单测 + 真实 EasyTier CLI 夹具）。
+
+### 构建与交付
+- 桌面：`npm run build` → `release/MC-Next-0.3.0.AppImage`(108MB) + `release/MC-Next-0.3.0.tar.gz`(102MB)。
+- 安卓原生：`android/tools/build-apk.sh` → `MC-Next-Native-0.3.0.apk`(73.7MB，54 个 .so，libjvm.so/libgl4es/libmcnext_jni.so 校验通过)。
+- 源码：`tools/publish-source.py` 推送 213 文件 → `main/launcher/`（commit `d5125c0a`）。
+- Release：`mc-next-v0.3.0`，4 个产物 + gh-proxy 镜像（Range 2KB 核验 206 可下载）。
+- 报告：`/workspace/DELIVERY-0.3.0.md`。
+
+### 边界（不糊弄）
+- 联机双节点真实 P2P 握手需公网/TUN，沙箱 loopback 未成功，未伪造「已连接」。
+- 皮肤上传需用户显式配置 endpoint+token（LittleSkin 无公开稳定上传 API）。
+- 新功能 UI 聚焦桌面端；原生 APK 复用 0.2.0 JRE/GL4ES 启动链，两端共享 engine/ 源码。
+

@@ -22,9 +22,11 @@ PREFIX = "launcher/"
 TOKEN = os.environ.get("GITHUB_TOKEN") or Path("/tmp/gh_token").read_text().strip()
 API = "https://api.github.com"
 
+# 0.4.0：不再整体排除 android-build，让 Capacitor 构建脚本/配置一并进 main；
+# 仅排除其中的构建产物与依赖目录。
 EXCLUDE_DIRS = {
     "node_modules", "dist", "release", ".git", ".gradle", "build", ".cxx",
-    "jniLibs", "runtime/download", "assets/runtime", "android-build", "__pycache__"
+    "jniLibs", "runtime/download", "assets/runtime", "www", "public", "__pycache__"
 }
 EXCLUDE_SUFFIX = {".jar", ".apk", ".zip", ".xz", ".so", ".AppImage", ".gz", ".log", ".class", ".dex"}
 MAX_BYTES = 2 * 1024 * 1024
@@ -88,7 +90,7 @@ def main():
 
     tree = api(f"/repos/{REPO}/git/trees", "POST", {"base_tree": base_tree, "tree": entries})
     commit = api(f"/repos/{REPO}/git/commits", "POST", {
-        "message": "feat: MC-Next 0.3.0 生态扩展模块（Java 管家 / 联机大厅 / 世界管家 / 3D 皮肤 / 多端一致 UI）",
+        "message": "feat: MC-Next 0.4.0 全能管家（P2P 容错向导 / 模组资源包管家 / BMCLAPI 首选+指数退避 / Capacitor 构建修复）",
         "tree": tree["sha"], "parents": [ref]
     })
     api(f"/repos/{REPO}/git/refs/heads/main", "PATCH", {"sha": commit["sha"]})

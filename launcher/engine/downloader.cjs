@@ -23,6 +23,13 @@ class DownloadQueue {
     this.retries = opts.retries === undefined ? 2 : opts.retries;
     this.fetchImpl = opts.fetchImpl || null;
     this.onEvent = opts.onEvent || (() => {});
+    // —— 0.4.0 模块三：多源加速 + 指数退避配置透传 ——
+    // 只收集显式传入的键，避免 undefined 覆盖 http.js 的 DEFAULTS
+    this.preferMirror = opts.preferMirror !== false;
+    this.backoffOpts = {};
+    for (const k of ['backoffBaseMs', 'backoffMaxMs', 'backoffFactor', 'jitter', 'sleepFn', 'random', 'timeoutMs']) {
+      if (opts[k] !== undefined) this.backoffOpts[k] = opts[k];
+    }
     this.results = [];
     this.controllers = new Map();
     this.cancelled = new Set();
@@ -89,7 +96,8 @@ class DownloadQueue {
     const urls = [...new Set([task.url, ...(task.urls || [])])].filter(Boolean);
     try {
       if (ac.signal.aborted || this._allCancelled) throw new Error('cancelled');
-      // 一次调用即可：http.js 内部按 [首选, 显式备用源, BMCLAPI 镜像] 顺序自动降级
+      // 一次调用即可：http.js 内部按 [BMCLAPI 镜像, 显式备用源, Mojang 官方] 顺序自动降级
+      // （preferMirror:false 时退回 [原 URL, 备用源, 镜像] 旧顺序）
       const r = await downloadFile(urls[0], task.dest, {
         fetchImpl: this._scopedFetch(ac.signal),
         signal: ac.signal,
@@ -98,6 +106,9 @@ class DownloadQueue {
         totalBytesHint: task.size || 0,
         retries: this.retries,
         mirrorRetries: 0,
+        preferMirror: this.preferMirror,
+        ...this.backoffOpts,
+        onRetry: (info) => this._emit('retry', { id, ...info }),
         onProgress: (received, totalBytes) => {
           this.bytes.set(id, received);
           if (totalBytes) this.totals.set(id, totalBytes);

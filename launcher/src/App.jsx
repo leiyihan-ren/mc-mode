@@ -14,6 +14,7 @@ import JavaManagerPage from './pages/JavaManagerPage.jsx'
 import LobbyPage from './pages/LobbyPage.jsx'
 import WorldManagerPage from './pages/WorldManagerPage.jsx'
 import SkinPage from './pages/SkinPage.jsx'
+import ModsPage from './pages/ModsPage.jsx'
 import MobileNav from './components/MobileNav.jsx'
 import { isMobile } from './lib/remote.js'
 
@@ -51,7 +52,7 @@ export default function App() {
     server: ServerPage, account: AccountPage, modpack: ModpackPage,
     localjar: LocalJarPage, crash: CrashPage,
     java: JavaManagerPage, lobby: LobbyPage, world: WorldManagerPage,
-    skin: SkinPage, settings: SettingsPage
+    skin: SkinPage, mods: ModsPage, settings: SettingsPage
   }
   const Page = pages[page] || HomePage
 

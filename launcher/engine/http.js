@@ -7,15 +7,39 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { mirrorCandidates } = require('./sources');
+const { mirrorCandidates, mirrorFirstCandidates } = require('./sources');
 
 const DEFAULTS = {
   timeoutMs: 60000,       // 单次请求超时（>60s 记录并绕过，符合防阻塞纪律）
   retries: 3,             // 单源重试次数
   mirrorRetries: 1,       // 换源后每个镜像的重试次数
   minTimeoutMs: 15000,    // 大文件放宽超时
-  chunkSize: 1 << 20
+  chunkSize: 1 << 20,
+  // —— 0.4.0 模块三：多源加速 + 指数退避 ——
+  preferMirror: true,     // BMCLAPI 首选、Mojang 官方备用
+  backoffBaseMs: 250,     // 第 1 次重试前等待
+  backoffFactor: 2,       // 每次 ×2
+  backoffMaxMs: 8000,     // 退避上限
+  jitter: 0               // 抖动比例（0~0.5）；单测用 0 保证确定性，可注入 random
 };
+
+/**
+ * 【0.4.0】指数退避延迟（纯函数，无 IO，可独立单测）。
+ *   attempt 从 0 开始：base, base*factor, base*factor^2 ... 上限 max。
+ *   jitter>0 时在 [raw*(1-j), raw*(1+j)] 之间浮动，random 可注入以便确定性测试。
+ */
+function backoffDelay(attempt, opts = {}) {
+  const base = Number(opts.backoffBaseMs ?? DEFAULTS.backoffBaseMs);
+  const max = Number(opts.backoffMaxMs ?? DEFAULTS.backoffMaxMs);
+  const factor = Number(opts.backoffFactor ?? DEFAULTS.backoffFactor);
+  const jitter = Math.min(0.9, Math.max(0, Number(opts.jitter ?? DEFAULTS.jitter)));
+  const n = Math.max(0, Math.floor(Number(attempt) || 0));
+  const raw = Math.min(base * Math.pow(factor, n), max);
+  if (!Number.isFinite(raw) || raw <= 0) return 0;
+  if (jitter === 0) return Math.round(raw);
+  const rand = typeof opts.random === 'function' ? opts.random() : Math.random();
+  return Math.max(0, Math.round(raw * (1 - jitter + 2 * jitter * Math.min(1, Math.max(0, rand)))));
+}
 
 class DownloadError extends Error {
   constructor(message, opts = {}) {
@@ -63,15 +87,39 @@ function anySignal(a, b) {
 async function downloadFile(url, dest, opts = {}) {
   const o = { ...DEFAULTS, ...opts };
   const fetchFn = o.fetchImpl || fetch;
-  const urls = o.extraUrls && o.extraUrls.length
-    ? [...new Set([url, ...o.extraUrls, ...mirrorCandidates(url).slice(1)])]
-    : [...new Set([url, ...mirrorCandidates(url).slice(1)])];
+  const sleepFn = o.sleepFn || sleep;
+  const extras = o.extraUrls && o.extraUrls.length ? o.extraUrls : [];
+  const mirrorChain = mirrorCandidates(url).slice(1); // 真实 BMCLAPI 镜像
+  let urls;
+  if (o.preferMirror === false) {
+    // 兼容旧策略：官方原 URL 首选
+    urls = [...new Set([url, ...extras, ...mirrorChain])];
+  } else {
+    const mf = mirrorFirstCandidates(url); // [镜像..., 官方] 或 [url]
+    if (mf.length > 1) {
+      // 有真实镜像：BMCLAPI 镜像 → 显式备用源 → Mojang 官方兜底
+      urls = [...new Set([...mf.slice(0, -1), ...extras, mf[mf.length - 1]])];
+    } else {
+      // 无镜像（本地测试端点 / 第三方 URL）：保持原 URL 首选，不擅自改顺序
+      urls = [...new Set([url, ...extras, ...mirrorChain])];
+    }
+  }
   const tmp = dest + '.part';
   const errors = [];
 
   fs.mkdirSync(path.dirname(dest), { recursive: true });
 
-  for (const u of urls) {
+  for (let ui = 0; ui < urls.length; ui++) {
+    const u = urls[ui];
+    // 换源时上报（供 UI 展示「BMCLAPI → Mojang 官方」真实切换过程）
+    if (ui > 0 && typeof o.onRetry === 'function') {
+      try {
+        o.onRetry({
+          url: u, switched: true, attempt: 0, maxAttempts: o.retries + 1,
+          delayMs: 0, error: '上一源失败，切换备用源', urlIndex: ui, urlCount: urls.length
+        });
+      } catch { /* 事件消费者异常不影响下载 */ }
+    }
     // 断点续传：已下载字节数
     let have = 0;
     if (fs.existsSync(tmp)) {
@@ -140,17 +188,33 @@ async function downloadFile(url, dest, opts = {}) {
         // 网络类错误才重试；HTTP 4xx（除429）直接换源
         const msg = String(e.message || e);
         if (/HTTP 4\d\d/.test(msg) && !/HTTP 429/.test(msg)) break;
-        if (attempt < o.retries) await sleep(500 * (attempt + 1));
+        if (attempt < o.retries) {
+          const delayMs = backoffDelay(attempt, o);
+          if (typeof o.onRetry === 'function') {
+            try {
+              o.onRetry({
+                url: u, switched: false, attempt: attempt + 1, maxAttempts: o.retries + 1,
+                delayMs, error: msg, urlIndex: ui, urlCount: urls.length
+              });
+            } catch { /* noop */ }
+          }
+          await sleepFn(delayMs);
+        }
       }
     }
   }
   throw new DownloadError(`下载失败（${url}）: ${errors[errors.length - 1] || '未知错误'}`, { urls });
 }
 
-/** 获取 JSON，自动多源降级 */
+/** 获取 JSON，自动多源降级（0.4.0：BMCLAPI 首选 + 指数退避） */
 async function fetchJson(url, opts = {}) {
-  const urls = [...new Set([url, ...mirrorCandidates(url).slice(1)])];
-  const o = { timeoutMs: 30000, retries: 2, ...opts };
+  const o = { ...DEFAULTS, timeoutMs: 30000, retries: 2, ...opts };
+  const sleepFn = o.sleepFn || sleep;
+  const mf = o.preferMirror === false
+    ? [url, ...mirrorCandidates(url).slice(1)]
+    : mirrorFirstCandidates(url);
+  const extras = o.extraUrls && o.extraUrls.length ? o.extraUrls : [];
+  const urls = [...new Set([...mf, ...extras])];
   const errors = [];
   for (const u of urls) {
     for (let i = 0; i <= o.retries; i++) {
@@ -160,11 +224,25 @@ async function fetchJson(url, opts = {}) {
         return await resp.json();
       } catch (e) {
         errors.push(`${u}: ${e.message}`);
-        if (i < o.retries) await sleep(400 * (i + 1));
+        if (o.signal && o.signal.aborted) throw e;
+        if (i < o.retries) {
+          const delayMs = backoffDelay(i, o);
+          if (typeof o.onRetry === 'function') {
+            try {
+              o.onRetry({
+                url: u, switched: false, attempt: i + 1, maxAttempts: o.retries + 1,
+                delayMs, error: String(e.message || e)
+              });
+            } catch { /* noop */ }
+          }
+          await sleepFn(delayMs);
+        }
       }
     }
   }
   throw new DownloadError(`JSON 获取失败（${url}）: ${errors[errors.length - 1]}`, { urls });
 }
 
-module.exports = { downloadFile, fetchJson, fetchWithTimeout, DownloadError, DEFAULTS };
+module.exports = {
+  downloadFile, fetchJson, fetchWithTimeout, DownloadError, DEFAULTS, backoffDelay
+};

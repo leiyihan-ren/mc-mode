@@ -1,11 +1,11 @@
 {
   "repo": "https://github.com/leiyihan-ren/mc-mode",
-  "tag": "mc-next-v0.3.0",
+  "tag": "mc-next-v0.4.0",
   "mirror": "https://gh-proxy.com/",
   "assets": {
-    "appImage": "MC-Next-0.3.0.AppImage",
-    "tarGz": "MC-Next-0.3.0.tar.gz",
-    "apk": "MC-Next-Native-0.3.0.apk",
-    "source": "mc-next-source-0.3.0.tar.gz"
+    "appImage": "MC-Next-0.4.0.AppImage",
+    "tarGz": "MC-Next-0.4.0.tar.gz",
+    "apk": "MC-Next-Native-0.4.0.apk",
+    "source": "mc-next-source-0.4.0.tar.gz"
   }
 }

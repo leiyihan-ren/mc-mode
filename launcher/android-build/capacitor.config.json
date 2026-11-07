@@ -1,0 +1,6 @@
+{
+  "appId": "com.mcnext.launcher",
+  "appName": "MC-Next",
+  "webDir": "www",
+  "android": { "allowMixedContent": true }
+}

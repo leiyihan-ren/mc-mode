@@ -4,9 +4,10 @@ export default function DownloadPage({ goto }) {
   const [manifest, setManifest] = useState(null)
   const [releases, setReleases] = useState([])
   const [local, setLocal] = useState([])
-  const [tasks, setTasks] = useState({}) // id -> {received,total,status}
+  const [tasks, setTasks] = useState({}) // id -> {received,total,status,retry}
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('')
+  const [sources, setSources] = useState(null)
 
   const refreshLocal = useCallback(() => {
     window.mcnext.listClients().then(list => setLocal(list.map(f => f.replace(/\.jar$/, ''))))
@@ -28,13 +29,25 @@ export default function DownloadPage({ goto }) {
       setLoading(false)
     }).catch(() => setLoading(false))
     refreshLocal()
+    window.mcnext.downloadSources?.().then(setSources).catch(() => {})
   }, [refreshLocal])
 
   useEffect(() => {
     const api = window.mcnext
-    api.onDownloadProgress(p => setTasks(t => ({ ...t, [p.id]: { ...t[p.id], ...p, status: 'downloading' } })))
-    api.onDownloadDone(p => setTasks(t => ({ ...t, [p.id]: { ...t[p.id], status: 'done' } })))
+    api.onDownloadProgress(p => setTasks(t => ({ ...t, [p.id]: { ...t[p.id], ...p, status: 'downloading', retry: null } })))
+    api.onDownloadDone(p => setTasks(t => ({ ...t, [p.id]: { ...t[p.id], status: 'done', retry: null } })))
     api.onDownloadError(p => setTasks(t => ({ ...t, [p.id]: { ...t[p.id], status: 'error', error: p.error } })))
+    // 0.4.0：真实重试 / 换源事件（BMCLAPI 首选 → Mojang 官方备用，指数退避）
+    api.onDownloadRetry?.(p => setTasks(t => ({
+      ...t,
+      [p.id]: {
+        ...t[p.id],
+        status: 'retrying',
+        retry: p.switched
+          ? `已切换备用源 ${p.urlIndex + 1}/${p.urlCount}`
+          : `重试 ${p.attempt}/${p.maxAttempts} · ${p.delayMs}ms 退避`
+      }
+    })))
   }, [])
 
   const handleDownload = useCallback(async (versionId) => {
@@ -79,6 +92,16 @@ export default function DownloadPage({ goto }) {
         />
       </header>
 
+      {sources && (
+        <div className="glass-panel px-4 py-3 flex flex-wrap items-center gap-3 text-xs">
+          <span className="tag bg-mc-green/15 text-mc-green">首选 · {sources.primary.name}</span>
+          <span className="text-slate-600">→</span>
+          <span className="tag bg-white/5 text-slate-400">备用 · Mojang 官方（{sources.fallback.length} 个源）</span>
+          <span className="text-slate-600 truncate">{sources.retry}</span>
+        </div>
+      )}
+      {!sources && <div className="text-xs text-slate-600 -mt-2">下载策略：BMCLAPI 首选 / Mojang 官方备用 · 失败指数退避重试</div>}
+
       <div className="flex-1 glass-panel overflow-hidden flex flex-col">
         <div className="overflow-y-auto flex-1">
           <table className="w-full text-sm">
@@ -108,12 +131,15 @@ export default function DownloadPage({ goto }) {
                         <div className="flex items-center gap-2">
                           <div className="w-32 h-1.5 rounded-full bg-white/10 overflow-hidden">
                             <div
-                              className={`h-full rounded-full transition-all ${t.status === 'error' ? 'bg-mc-red' : t.status === 'done' ? 'bg-mc-green' : 'bg-accent'}`}
+                              className={`h-full rounded-full transition-all ${t.status === 'error' ? 'bg-mc-red' : t.status === 'done' ? 'bg-mc-green' : t.status === 'retrying' ? 'bg-mc-gold' : 'bg-accent'}`}
                               style={{ width: t.total ? `${Math.min(100, (t.received / t.total) * 100)}%` : t.status === 'done' ? '100%' : '30%' }}
                             />
                           </div>
-                          <span className={`text-xs ${t.status === 'error' ? 'text-mc-red' : 'text-slate-400'}`}>
-                            {t.status === 'error' ? (t.error || '失败').slice(0, 30) : t.status === 'done' ? '完成' : t.total ? `${(t.received / 1048576).toFixed(1)}/${(t.total / 1048576).toFixed(1)}MB` : '准备中'}
+                          <span className={`text-xs ${t.status === 'error' ? 'text-mc-red' : t.status === 'retrying' ? 'text-mc-gold' : 'text-slate-400'}`}>
+                            {t.status === 'error' ? (t.error || '失败').slice(0, 30)
+                              : t.status === 'retrying' ? (t.retry || '重试中')
+                                : t.status === 'done' ? '完成'
+                                  : t.total ? `${(t.received / 1048576).toFixed(1)}/${(t.total / 1048576).toFixed(1)}MB` : '准备中'}
                           </span>
                         </div>
                       ) : (
