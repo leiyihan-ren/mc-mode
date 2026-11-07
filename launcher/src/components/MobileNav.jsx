@@ -3,9 +3,9 @@ import React from 'react'
 const TABS = [
   { id: 'home', icon: '🚀', label: '启动' },
   { id: 'download', icon: '⬇️', label: '下载' },
+  { id: 'instances', icon: '📦', label: '实例' },
   { id: 'mods', icon: '🧩', label: '模组' },
   { id: 'console', icon: '🖥️', label: '控制台' },
-  { id: 'server', icon: '🛠️', label: '服务端' },
   { id: 'settings', icon: '⚙️', label: '设置' }
 ]
 

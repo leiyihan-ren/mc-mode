@@ -15,7 +15,7 @@ function verSort(a, b) {
   return b.localeCompare(a)
 }
 
-export default function HomePage({ settings, setSettings, gameRunning, setGameRunning, goto }) {
+export default function HomePage({ settings, setSettings, gameRunning, setGameRunning, goto, playLaunchFx }) {
   const [versions, setVersions] = useState([])
   const [selected, setSelected] = useState(null)
   const [loaders, setLoaders] = useState([])
@@ -94,6 +94,10 @@ export default function HomePage({ settings, setSettings, gameRunning, setGameRu
     if (!selected) return
     setLaunching(true)
     setMessage(null)
+    // 0.5.0 模块一：点击即触发「启动器缩小淡出 → 进入游戏」过渡动画（纯视觉，不阻塞 JVM）
+    const fxDone = playLaunchFx ? playLaunchFx(selected) : Promise.resolve()
+    const jvmProfileId = settings.jvmProfileId || null
+    const extraJvmArgsText = settings.extraJvmArgsText || ''
     if (remoteMode) {
       // 局域网串流启动：让 PC 端 MC-Next 去跑游戏，手机当遥控器
       try {
@@ -106,6 +110,7 @@ export default function HomePage({ settings, setSettings, gameRunning, setGameRu
         if (r.ok) {
           setGameRunning(true)
           setMessage({ type: 'ok', text: `📡 已向电脑发送启动指令：${selected}${selectedLoader ? ` + ${selectedLoader}` : ''}，请回到电脑前查看` })
+          await fxDone
           goto('console')
         } else {
           setMessage({ type: 'error', text: `电脑端拒绝启动: ${r.error}` })
@@ -130,11 +135,14 @@ export default function HomePage({ settings, setSettings, gameRunning, setGameRu
         minMemory,
         maxMemory,
         playerName,
+        jvmProfileId,
+        extraJvmArgsText,
         extraJars: loaderJar ? [loaderJar] : []
       })
       if (r.ok) {
         setGameRunning(true)
         setMessage({ type: 'ok', text: `已启动 ${selected}${selectedLoader ? ` + ${selectedLoader}` : ''}${r.missingCount ? `（自动补全 ${r.missingCount} 个依赖）` : ''}` })
+        await fxDone
         goto('console')
       } else {
         setMessage({ type: 'error', text: `启动失败: ${r.error}` })
@@ -143,7 +151,7 @@ export default function HomePage({ settings, setSettings, gameRunning, setGameRu
       setMessage({ type: 'error', text: `启动异常: ${e.message}` })
     }
     setLaunching(false)
-  }, [selected, selectedLoader, javaPath, minMemory, maxMemory, playerName, remoteMode])
+  }, [selected, selectedLoader, javaPath, minMemory, maxMemory, playerName, remoteMode, settings, recommendedJava, playLaunchFx, goto])
 
   return (
     <div className="h-full flex flex-col gap-5">

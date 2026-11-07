@@ -111,6 +111,17 @@ contextBridge.exposeInMainWorld('mcnext', {
   modsShaderCheck: (o) => ipcRenderer.invoke('mods:shaderCheck', o || {}),
   modsPickPack: () => ipcRenderer.invoke('mods:pickPack'),
   modsImport: (o) => ipcRenderer.invoke('mods:import', o),
+  // 模块二（0.5.0）：整合包一键导出 / 分享 / 拖拽导入 / 依赖预检
+  modpackParseBuffer: (base64) => ipcRenderer.invoke('modpack:parseBuffer', { base64 }),
+  modpackDescribe: (plan) => ipcRenderer.invoke('modpack:describe', plan),
+  modpackPreflight: (plan) => ipcRenderer.invoke('modpack:preflight', plan),
+  modpackExport: (o) => ipcRenderer.invoke('modpack:export', o),
+  modpackReadManifest: (p) => ipcRenderer.invoke('modpack:readManifest', p),
+  // 模块一（0.5.0）：动态背景 / 极客 JVM 面板
+  appearancePickImage: () => ipcRenderer.invoke('appearance:pickImage'),
+  appearanceValidate: (cfg) => ipcRenderer.invoke('appearance:validate', cfg),
+  jvmProfiles: () => ipcRenderer.invoke('jvm:profiles'),
+  jvmPreview: (o) => ipcRenderer.invoke('jvm:preview', o),
   // 平台信息
   platform: process.platform,
   isRoot: typeof process.getuid === 'function' && process.getuid() === 0

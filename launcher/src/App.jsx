@@ -15,7 +15,10 @@ import LobbyPage from './pages/LobbyPage.jsx'
 import WorldManagerPage from './pages/WorldManagerPage.jsx'
 import SkinPage from './pages/SkinPage.jsx'
 import ModsPage from './pages/ModsPage.jsx'
+import InstancePage from './pages/InstancePage.jsx'
 import MobileNav from './components/MobileNav.jsx'
+import BackgroundLayer from './components/BackgroundLayer.jsx'
+import LaunchTransition from './components/LaunchTransition.jsx'
 import { isMobile } from './lib/remote.js'
 
 export default function App() {
@@ -27,6 +30,7 @@ export default function App() {
   })
   const [gameRunning, setGameRunning] = useState(false)
   const [serverRunning, setServerRunning] = useState(false)
+  const [launchFx, setLaunchFx] = useState(null)
 
   useEffect(() => {
     localStorage.setItem('mcnext-settings', JSON.stringify(settings))
@@ -47,40 +51,51 @@ export default function App() {
     api.serverStatus().then(setServerRunning)
   }, [])
 
+  // 0.5.0 模块一：启动过渡动画，返回 Promise 供 HomePage 与真实启动并行等待
+  const playLaunchFx = useCallback((version) => {
+    setLaunchFx({ version })
+    return new Promise(resolve => setTimeout(resolve, 1450))
+  }, [])
+
   const pages = {
     home: HomePage, download: DownloadPage, console: ConsolePage,
     server: ServerPage, account: AccountPage, modpack: ModpackPage,
     localjar: LocalJarPage, crash: CrashPage,
     java: JavaManagerPage, lobby: LobbyPage, world: WorldManagerPage,
-    skin: SkinPage, mods: ModsPage, settings: SettingsPage
+    skin: SkinPage, mods: ModsPage, instances: InstancePage, settings: SettingsPage
   }
   const Page = pages[page] || HomePage
 
   return (
-    <div className="h-full flex flex-col bg-base-900">
-      {!isMobile && <TitleBar />}
-      <div className="flex-1 flex min-h-0">
-        {!isMobile && (
-          <Sidebar
-            page={page}
-            setPage={setPage}
-            gameRunning={gameRunning}
-            serverRunning={serverRunning}
-          />
-        )}
-        <main className={`flex-1 min-w-0 overflow-hidden ${isMobile ? 'p-3' : 'p-6'} animate-fade-in`}>
-          <Page
-            settings={settings}
-            setSettings={setSettings}
-            gameRunning={gameRunning}
-            setGameRunning={setGameRunning}
-            serverRunning={serverRunning}
-            setServerRunning={setServerRunning}
-            goto={setPage}
-          />
-        </main>
+    <div className="app-root">
+      <BackgroundLayer config={settings.background} />
+      <div className={`app-shell flex flex-col ${launchFx ? 'app-shell-launching' : ''}`}>
+        {!isMobile && <TitleBar />}
+        <div className="flex-1 flex min-h-0">
+          {!isMobile && (
+            <Sidebar
+              page={page}
+              setPage={setPage}
+              gameRunning={gameRunning}
+              serverRunning={serverRunning}
+            />
+          )}
+          <main className={`flex-1 min-w-0 overflow-hidden ${isMobile ? 'p-3' : 'p-6'} animate-fade-in`}>
+            <Page
+              settings={settings}
+              setSettings={setSettings}
+              gameRunning={gameRunning}
+              setGameRunning={setGameRunning}
+              serverRunning={serverRunning}
+              setServerRunning={setServerRunning}
+              goto={setPage}
+              playLaunchFx={playLaunchFx}
+            />
+          </main>
+        </div>
+        {isMobile && <MobileNav page={page} setPage={setPage} gameRunning={gameRunning} />}
       </div>
-      {isMobile && <MobileNav page={page} setPage={setPage} gameRunning={gameRunning} />}
+      {launchFx && <LaunchTransition version={launchFx.version} onDone={() => setLaunchFx(null)} />}
     </div>
   )
 }

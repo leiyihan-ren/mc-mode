@@ -87,6 +87,101 @@
 .drag-region { -webkit-app-region: drag; }
 .no-drag { -webkit-app-region: no-drag; }
 
+/* ==================== 0.5.0 模块一：动态背景引擎 ==================== */
+.app-root { position: relative; height: 100%; overflow: hidden; }
+.bg-layer { position: absolute; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
+.bg-dark {
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(1100px 620px at 12% -12%, color-mix(in srgb, var(--mc-accent) 14%, transparent), transparent 68%),
+    radial-gradient(900px 520px at 108% 112%, rgba(126, 86, 214, 0.12), transparent 70%),
+    var(--mc-bg900);
+}
+.bg-dark::after {
+  content: ''; position: absolute; inset: 0;
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+  background-size: 44px 44px;
+  -webkit-mask-image: radial-gradient(circle at 50% 30%, #000 0%, transparent 82%);
+  mask-image: radial-gradient(circle at 50% 30%, #000 0%, transparent 82%);
+}
+.bg-canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.bg-image {
+  position: absolute; inset: -8%;
+  background-size: cover; background-position: center; background-repeat: no-repeat;
+  transform: scale(1.08);
+}
+.bg-overlay { position: absolute; inset: 0; backdrop-filter: blur(2px); }
+.bg-vignette {
+  position: absolute; inset: 0;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.18), transparent 28%, transparent 68%, rgba(0, 0, 0, 0.38));
+}
+.app-shell { position: relative; z-index: 10; height: 100%; }
+
+/* 尊重系统「减少动态效果」偏好 */
+@media (prefers-reduced-motion: reduce) {
+  .app-shell-launching { animation-duration: 1ms; }
+  .launch-cube, .launch-bar i { animation-duration: 1ms; }
+}
+
+/* ==================== 0.5.0 模块一：启动过渡动画 ==================== */
+.app-shell-launching {
+  animation: appShrinkFade 900ms var(--mc-t-ease) forwards;
+  transform-origin: center center;
+  pointer-events: none;
+}
+@keyframes appShrinkFade {
+  0% { transform: scale(1); opacity: 1; filter: blur(0); }
+  100% { transform: scale(0.86); opacity: 0; filter: blur(14px); }
+}
+.launch-fx {
+  position: fixed; inset: 0; z-index: 60;
+  display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(circle at 50% 45%, color-mix(in srgb, var(--mc-accent) 12%, transparent), rgba(6, 9, 15, 0.96) 62%);
+  animation: fxFade 1450ms ease forwards;
+}
+@keyframes fxFade {
+  0% { opacity: 0; } 12% { opacity: 1; } 78% { opacity: 1; } 100% { opacity: 0; }
+}
+.launch-fx-inner { display: flex; flex-direction: column; align-items: center; gap: 14px; text-align: center; }
+.launch-cube {
+  width: 62px; height: 62px; position: relative;
+  transform-style: preserve-3d;
+  animation: cubeSpin 2.4s linear infinite;
+}
+.lc-face {
+  position: absolute; width: 32px; height: 32px;
+  border: 2px solid var(--mc-accent); border-radius: 5px;
+  box-shadow: 0 0 18px -2px var(--mc-accent-glow);
+}
+.lc-f1 { transform: translateZ(16px); }
+.lc-f2 { transform: rotateY(180deg) translateZ(16px); }
+.lc-f3 { transform: rotateY(90deg) translateZ(16px); }
+.lc-f4 { transform: rotateY(-90deg) translateZ(16px); }
+@keyframes cubeSpin {
+  0% { transform: rotateX(-24deg) rotateY(0deg); }
+  100% { transform: rotateX(-24deg) rotateY(360deg); }
+}
+.launch-title { font-size: 20px; font-weight: 700; letter-spacing: 0.08em; color: var(--mc-text); }
+.launch-sub { font-size: 13px; color: var(--mc-accent); }
+.launch-hint { font-size: 11px; color: var(--mc-text-muted); letter-spacing: 0.05em; }
+.launch-bar {
+  width: 220px; height: 4px; border-radius: 999px; overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+}
+.launch-bar i {
+  display: block; height: 100%; width: 0; border-radius: 999px;
+  background: linear-gradient(90deg, var(--mc-accent-dim), var(--mc-accent));
+  box-shadow: 0 0 12px var(--mc-accent-glow);
+  animation: barGrow 1.3s var(--mc-t-ease) forwards;
+}
+@keyframes barGrow { 0% { width: 0; } 100% { width: 100%; } }
+
+/* 拖拽导入热区 */
+.drop-zone { transition: all var(--mc-t-base) var(--mc-t-ease); }
+.drop-zone-active { border-color: var(--mc-accent) !important; background: color-mix(in srgb, var(--mc-accent) 10%, transparent) !important; }
+
 /* 沉浸式夜间护眼：把既有页面里散落的 slate 文本/面板统一暖化成 token 色，
    让 [data-theme="midnight"] 真正生效，无需逐页改写。 */
 [data-theme="midnight"] .text-slate-50,

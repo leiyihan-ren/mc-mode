@@ -1,19 +1,19 @@
 #!/usr/bin/env python3.11
 # -*- coding: utf-8 -*-
-"""创建 mc-next-v0.4.0 Release 并上传五个产物（AppImage / tar.gz / 原生 APK / Capacitor APK / source）。"""
+"""创建 mc-next-v0.5.0 Release 并上传五个产物（AppImage / tar.gz / 原生 APK / Capacitor APK / source）。"""
 import os, sys, json, urllib.request, urllib.error
 
 REPO = os.environ.get("MCNEXT_REPO", "leiyihan-ren/mc-mode")
 TOKEN = (os.environ.get("GITHUB_TOKEN") or open("/tmp/gh_token").read().strip())
-TAG = "mc-next-v0.4.0"
+TAG = "mc-next-v0.5.0"
 ASSETS = [
-    ("/workspace/mc-launcher/release/MC-Next-0.4.0.AppImage", "MC-Next-0.4.0.AppImage"),
-    ("/workspace/mc-launcher/release/MC-Next-0.4.0.tar.gz", "MC-Next-0.4.0.tar.gz"),
-    ("/workspace/MC-Next-Native-0.4.0.apk", "MC-Next-Native-0.4.0.apk"),
-    ("/workspace/MC-Next-Capacitor-0.4.0.apk", "MC-Next-Capacitor-0.4.0.apk"),
-    ("/workspace/mc-next-source-0.4.0.tar.gz", "mc-next-source-0.4.0.tar.gz"),
+    ("/workspace/mc-launcher/release/MC-Next-0.5.0.AppImage", "MC-Next-0.5.0.AppImage"),
+    ("/workspace/mc-launcher/release/MC-Next-0.5.0.tar.gz", "MC-Next-0.5.0.tar.gz"),
+    ("/workspace/MC-Next-Native-0.5.0.apk", "MC-Next-Native-0.5.0.apk"),
+    ("/workspace/MC-Next-Capacitor-0.5.0.apk", "MC-Next-Capacitor-0.5.0.apk"),
+    ("/workspace/mc-next-source-0.5.0.tar.gz", "mc-next-source-0.5.0.tar.gz"),
 ]
-UA = "mc-next-release/0.4"
+UA = "mc-next-release/0.5"
 
 def api(path, method="GET", payload=None, base="https://api.github.com"):
     data = json.dumps(payload).encode() if payload is not None else None
@@ -27,7 +27,6 @@ def api(path, method="GET", payload=None, base="https://api.github.com"):
         return json.loads(r.read().decode() or "{}")
 
 def upload_asset(upload_url, filepath, name):
-    # upload_url 形如 https://uploads.github.com/repos/.../releases/{id}/assets{?name,label}
     url = upload_url.split("{")[0] + f"?name={name}"
     with open(filepath, "rb") as f:
         data = f.read()
@@ -40,7 +39,6 @@ def upload_asset(upload_url, filepath, name):
         return json.loads(r.read().decode() or "{}")
 
 def main():
-    # 若 release 已存在则复用，否则创建
     try:
         rel = api(f"/repos/{REPO}/releases/tags/{TAG}")
         release_id = rel["id"]
@@ -49,15 +47,15 @@ def main():
         if e.code == 404:
             rel = api(f"/repos/{REPO}/releases", "POST", {
                 "tag_name": TAG,
-                "name": "MC-Next v0.4.0 — 全能管家（生态扩展与真实环境适配）",
+                "name": "MC-Next v0.5.0 — 极致体验（UI 视觉革命 / 一键分发）",
                 "body": (
-                    "v0.4.0：从「能启动」进化到「全能管家」。\n\n"
-                    "· 模块一 真实 P2P 联机容错：联机大厅创建/加入房间，握手失败自动弹窗"
-                    "「请检查防火墙/路由器 UDP 限制」+ 分平台排查步骤/命令/端口/官方文档。\n"
-                    "· 模块二 模组与资源包智能管家：真实解析 jar 元数据、启用禁用 rename、"
-                    "缺失前置（Fabric API 等）标红、光影材质一键导入、Iris/Oculus/OptiFine 引导。\n"
-                    "· 模块三 下载引擎多源加速：BMCLAPI 首选 / Mojang 官方备用 / 指数退避重试 / 重试换源事件。\n\n"
-                    "测试 229/229 通过；Electron AppImage+tar.gz、Android 原生 APK、Capacitor APK 均真实构建。"
+                    "v0.5.0：从「功能完备」转向「极致体验」。\n\n"
+                    "· 模块一 UI 视觉与交互革命：动态背景引擎（深色极简 / Canvas 粒子 / 本地图片+高斯模糊毛玻璃）、"
+                    "启动器缩小淡出进入游戏过渡动画、极客 JVM 自定义面板（真实 G1GC 推荐配置一键填入、参数校验与内存托管）。\n"
+                    "· 模块二 整合包一键封装与分享：实例管理页一键导出标准 .mrpack（mods/config/options.txt + 依赖版本 + sha256 清单，"
+                    "本地模组自包含不伪造直链）、拖拽导入 + 依赖预检拦截（缺失前置 API 明确标红报错而非崩溃）。\n"
+                    "· 模块三 沙盒模拟压测：50 模组实例导出→读回→重装闭环、缺失 Fabric API 导入拦截（不创建半成品实例）。\n\n"
+                    "全量测试 259/259 通过（既有 229 项零回归）；Electron AppImage+tar.gz、Android 原生 APK、Capacitor APK 均真实构建。"
                 ),
                 "draft": False, "prerelease": False,
             })

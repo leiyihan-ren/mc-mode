@@ -90,7 +90,7 @@ def main():
 
     tree = api(f"/repos/{REPO}/git/trees", "POST", {"base_tree": base_tree, "tree": entries})
     commit = api(f"/repos/{REPO}/git/commits", "POST", {
-        "message": "feat: MC-Next 0.4.0 全能管家（P2P 容错向导 / 模组资源包管家 / BMCLAPI 首选+指数退避 / Capacitor 构建修复）",
+        "message": "feat: MC-Next 0.5.0 极致体验（动态背景/启动动画/极客 JVM 面板 / 整合包一键导出导入 / 沙盒压测）",
         "tree": tree["sha"], "parents": [ref]
     })
     api(f"/repos/{REPO}/git/refs/heads/main", "PATCH", {"sha": commit["sha"]})

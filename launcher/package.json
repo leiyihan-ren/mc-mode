@@ -1,6 +1,6 @@
 {
   "name": "mc-next",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "MC-Next — 现代化 Minecraft 启动器（原版/Forge/Fabric/NeoForge/Quilt 全生态）",
   "license": "MIT",
   "main": "electron/main.cjs",

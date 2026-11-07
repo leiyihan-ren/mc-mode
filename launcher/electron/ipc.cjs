@@ -30,6 +30,9 @@ const skinMgr = require('../engine/skin/manager.cjs');
 // —— 生态扩展模块（0.4.0）——
 const modsMgr = require('../engine/mods/manager.cjs');
 const netGuide = require('../engine/net/guide.cjs');
+// —— 极致体验模块（0.5.0）——
+const appearance = require('../engine/appearance.cjs');
+const modpackExport = require('../engine/modpackExport.cjs');
 const releaseCfg = require('../config/release.json');
 
 const HOME = require('os').homedir();
@@ -103,6 +106,21 @@ async function launchGameCore(opts) {
       await downloadFile(m.url, m.local, { expectedSha1: m.sha1 });
     }
 
+    // 模块一（0.5.0）：极客 JVM 面板 —— 推荐预设 + 自定义参数合成，内存由界面统一托管
+    const jvm = appearance.mergeLaunchJvm({
+      profileId: opts.jvmProfileId,
+      extraJvmArgsText: opts.extraJvmArgsText,
+      extraJvmArgs: opts.extraJvmArgs,
+      minMemory: opts.minMemory,
+      maxMemory: opts.maxMemory
+    });
+    for (const w of jvm.issues.filter(i => i.severity === 'error')) {
+      send('game:log', { level: 'warn', text: `[MC-Next] 已忽略非法 JVM 参数：${w.message}` });
+    }
+    if (jvm.jvmArgs.length) {
+      send('game:log', { level: 'info', text: `[MC-Next] 附加 ${jvm.jvmArgs.length} 个自定义 JVM 参数${jvm.profileId ? `（预设 ${jvm.profileId}）` : ''}` });
+    }
+
     const launcher = new GameLauncher({
       versionJson: vj,
       classpath: cp.classpath.join(process.platform === 'win32' ? ';' : ':'),
@@ -111,12 +129,13 @@ async function launchGameCore(opts) {
       assetsDir: ASSETS_DIR,
       assetIndexId: vj.assetIndex ? vj.assetIndex.id : 'legacy',
       javaPath: opts.javaPath || 'java',
-      minMemory: opts.minMemory || '1G',
-      maxMemory: opts.maxMemory || '4G',
+      minMemory: jvm.minMemory,
+      maxMemory: jvm.maxMemory,
       playerName: opts.playerName || 'Player',
       uuid: opts.uuid,
       versionId: opts.versionId,
       versionType: 'MC-Next',
+      extraJvmArgs: jvm.jvmArgs,
       env
     });
     launcher.on('log', l => send('game:log', l));
@@ -371,13 +390,57 @@ function registerIpc(mainWindow) {
     });
   });
 
-  // ==================== 模块二：整合包一键安装 ====================
+  // ==================== 模块二：整合包一键安装（0.5.0 带依赖预检硬拦截） ====================
   ipcMain.handle('modpack:parse', async (evt, filePath) => modpack.parseModpack(filePath));
-  ipcMain.handle('modpack:install', async (evt, { plan, instanceId, apiKey }) => {
-    return modpack.installPlan({
-      plan, root: LAUNCHER_DIR, instanceId, apiKey: apiKey || process.env.MCNEXT_CURSE_API_KEY,
-      onEvent: (e) => send('modpack:progress', e)
-    });
+  // 拖拽导入：接收 base64 文件字节（避免依赖 file.path 在 WebView / Capacitor 下不可用）
+  ipcMain.handle('modpack:parseBuffer', async (evt, { base64 } = {}) => {
+    if (!base64 || typeof base64 !== 'string') return { ok: false, error: '拖拽文件为空' };
+    try {
+      const plan = modpack.parseModpack(Buffer.from(base64, 'base64'));
+      return { ok: true, plan, describe: modpackExport.describeModpack(plan) };
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
+  ipcMain.handle('modpack:describe', async (evt, plan) => {
+    try { return { ok: true, ...modpackExport.describeModpack(plan) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
+  ipcMain.handle('modpack:preflight', async (evt, plan) => {
+    try { return { ok: true, ...modpackExport.preflightImport(plan) }; }
+    catch (e) { return { ok: false, error: e.message }; }
+  });
+  ipcMain.handle('modpack:install', async (evt, { plan, instanceId, apiKey, force } = {}) => {
+    try {
+      return await modpackExport.installWithPreflight({
+        plan, root: LAUNCHER_DIR, instanceId,
+        apiKey: apiKey || process.env.MCNEXT_CURSE_API_KEY,
+        force: !!force,
+        onEvent: (e) => send('modpack:progress', e)
+      });
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
+
+  // ==================== 模块二（0.5.0）：整合包一键导出 / 分享 ====================
+  ipcMain.handle('modpack:export', async (evt, { instanceId, name, versionId, includePacks } = {}) => {
+    try {
+      const r = dialog.showSaveDialogSync(mainWindow, {
+        title: '导出整合包（.mrpack）',
+        defaultPath: path.join(HOME, `${String(name || instanceId || 'modpack').replace(/[^\w.-]+/g, '-')}.mrpack`),
+        filters: [{ name: 'Modrinth 整合包', extensions: ['mrpack', 'zip'] }]
+      });
+      if (!r) return { ok: false, error: '已取消' };
+      const out = modpackExport.exportInstance(LAUNCHER_DIR, instanceId, {
+        outPath: r, name, versionId, includePacks
+      });
+      // 不把大 buffer 传回渲染进程
+      const { buffer, ...safe } = out;
+      return safe;
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
+  ipcMain.handle('modpack:readManifest', async (evt, filePath) => {
+    try {
+      const m = modpackExport.readExportManifest(filePath);
+      return m ? { ok: true, manifest: m } : { ok: false, error: '该包不含 MC-Next 自描述清单' };
+    } catch (e) { return { ok: false, error: e.message }; }
   });
 
   // ==================== 模块三：本地 Jar 智能解析与合并 ====================
@@ -566,6 +629,28 @@ function registerIpc(mainWindow) {
       return modsMgr.importPack(resolveGameDir(o), o.kind, o.srcPath, { overwrite: !!o.overwrite });
     } catch (e) { return { ok: false, error: e.message }; }
   });
+
+  // ==================== 模块一（0.5.0）：UI 视觉革命 — 动态背景 / 极客 JVM 面板 ====================
+  // 本地背景图片：选文件 → 真实字节校验 → 返回 dataUrl（不落盘、不暴露 file:// 路径）
+  ipcMain.handle('appearance:pickImage', async () => {
+    const r = await dialog.showOpenDialog(mainWindow, {
+      title: '选择本地背景图片',
+      filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] }],
+      properties: ['openFile']
+    });
+    if (r.canceled || !r.filePaths[0]) return { ok: false, error: '已取消' };
+    try {
+      const buf = fs.readFileSync(r.filePaths[0]);
+      const info = appearance.inspectBackgroundImage(buf);
+      if (!info.ok) return { ok: false, error: info.error };
+      return { ok: true, ...info, sourceName: path.basename(r.filePaths[0]) };
+    } catch (e) { return { ok: false, error: e.message }; }
+  });
+  // 校验 / 归一化外观配置（渲染进程保存前调用一次，避免脏配置）
+  ipcMain.handle('appearance:validate', async (evt, cfg) => appearance.validateAppearance(cfg));
+  // 推荐 JVM 预设列表 + 参数预校验（供设置页「推荐配置」与实时校验）
+  ipcMain.handle('jvm:profiles', async () => appearance.recommendedProfiles());
+  ipcMain.handle('jvm:preview', async (evt, o = {}) => appearance.mergeLaunchJvm(o));
 }
 
 module.exports = { registerIpc, state, launchGameCore, logBuf, pushLog, send };

@@ -101,6 +101,13 @@ export default function SettingsPage({ settings, setSettings }) {
   const [pcInput, setPcInput] = useState(getPC())
   const [pcTest, setPcTest] = useState(null)
   const [launcherStates, setLauncherStates] = useState({})
+  // 0.5.0 模块一：动态背景 / 极客 JVM 面板
+  const [profiles, setProfiles] = useState([])
+  const [preview, setPreview] = useState(null)
+  const [bgBusy, setBgBusy] = useState(false)
+  const [bgMsg, setBgMsg] = useState(null)
+  const [memCustom, setMemCustom] = useState('')
+  const [memMsg, setMemMsg] = useState(null)
   const mobile = isMobile
 
   useEffect(() => {
@@ -136,6 +143,62 @@ export default function SettingsPage({ settings, setSettings }) {
     setSaved(true)
     setTimeout(() => setSaved(false), 1500)
   }
+  const updateMany = (patch) => {
+    setSettings({ ...s, ...patch })
+    setSaved(true)
+    setTimeout(() => setSaved(false), 1500)
+  }
+
+  // 动态背景配置（归一化默认值）
+  const bg = {
+    mode: 'dark', particleCount: 72, particleSpeed: 0.6, blur: 14,
+    overlayOpacity: 0.55, particleColor: '#5b9dff', imageDataUrl: null,
+    ...(settings.background || {})
+  }
+  const updateBg = (patch) => updateMany({ background: { ...bg, ...patch } })
+
+  // 加载推荐 JVM 预设 + 实时预览最终启动参数
+  useEffect(() => {
+    const a = window.mcnext
+    if (!a || !a.jvmProfiles) return
+    a.jvmProfiles().then(setProfiles).catch(() => {})
+  }, [])
+  useEffect(() => {
+    const a = window.mcnext
+    if (!a || !a.jvmPreview) return
+    let alive = true
+    a.jvmPreview({
+      profileId: s.jvmProfileId || null,
+      extraJvmArgsText: s.extraJvmArgsText || '',
+      minMemory: s.minMemory, maxMemory: s.maxMemory
+    }).then(r => { if (alive) setPreview(r) }).catch(() => {})
+    return () => { alive = false }
+  }, [s.jvmProfileId, s.extraJvmArgsText, s.minMemory, s.maxMemory])
+
+  const pickBg = async () => {
+    setBgBusy(true); setBgMsg(null)
+    try {
+      const r = await window.mcnext.appearancePickImage()
+      if (r.ok) {
+        updateBg({ mode: 'image', imageDataUrl: r.dataUrl })
+        setBgMsg({ ok: true, text: `已应用 ${r.sourceName}（${r.mime}${r.width ? ` · ${r.width}×${r.height}` : ''} · ${(r.size / 1024).toFixed(0)}KB）` })
+      } else setBgMsg({ ok: false, text: r.error })
+    } catch (e) { setBgMsg({ ok: false, text: e.message }) }
+    finally { setBgBusy(false) }
+  }
+
+  const applyMem = () => {
+    const v = memCustom.trim()
+    if (!/^\d+(?:\.\d+)?[KMGkmg]$/.test(v)) { setMemMsg('格式不合法：应为数字 + K/M/G，例如 6G 或 8192M'); return }
+    update('maxMemory', v)
+    setMemCustom(''); setMemMsg(null)
+  }
+
+  const fillRecommended = () => {
+    const p = profiles.find(x => x.id === (s.jvmProfileId || 'g1')) || profiles[0]
+    if (!p) return
+    updateMany({ extraJvmArgsText: p.args.join('\n'), jvmProfileId: null })
+  }
 
   return (
     <div className="h-full flex flex-col gap-5">
@@ -159,11 +222,17 @@ export default function SettingsPage({ settings, setSettings }) {
             ))}
           </div>
         </Field>
-        <Field label="最大内存 (-Xmx)">
-          <div className="flex gap-2">
+        <Field label="最大内存 (-Xmx)" hint="也可自定义，如 6G / 8192M">
+          <div className="flex flex-wrap gap-2 items-center">
             {['2G', '4G', '8G', '16G'].map(v => (
               <button key={v} className={`btn text-xs ${s.maxMemory === v ? 'btn-primary' : 'btn-ghost'}`} onClick={() => update('maxMemory', v)}>{v}</button>
             ))}
+            <input
+              className="bg-base-900/60 border border-white/10 rounded-lg px-3 py-1.5 text-xs font-mono w-24 outline-none focus:border-accent/50"
+              placeholder="自定义 6G" value={memCustom} onChange={e => setMemCustom(e.target.value)}
+            />
+            <button className="btn-ghost text-xs" onClick={applyMem}>应用</button>
+            {memMsg && <span className="text-[11px] text-mc-red">{memMsg}</span>}
           </div>
         </Field>
         <Field label="玩家名称" hint="离线模式使用；正版 Microsoft 登录为框架级能力">
@@ -190,6 +259,85 @@ export default function SettingsPage({ settings, setSettings }) {
             <button className={`btn text-xs ${s.theme === 'midnight' ? 'btn-primary' : 'btn-ghost'}`} onClick={() => update('theme', 'midnight')}>🌙 夜间护眼</button>
           </div>
         </Field>
+      </div>
+
+      {/* 0.5.0 模块一：动态背景引擎 */}
+      <div className="glass-panel p-6 max-w-3xl border-accent/20">
+        <div className="text-sm font-medium text-accent mb-1">✨ 动态背景引擎</div>
+        <p className="text-xs text-slate-500 mb-3">
+          深色极简 / 动态粒子（Wallpaper Engine 风）/ 本地图片 + 高斯模糊 + 毛玻璃遮罩。设置即时生效并持久化。
+        </p>
+        <Field label="背景模式">
+          <div className="flex flex-wrap gap-2">
+            {[['dark', '🌑 深色极简'], ['particles', '✦ 动态粒子'], ['image', '🖼 本地图片']].map(([m, label]) => (
+              <button key={m} className={`btn text-xs ${bg.mode === m ? 'btn-primary' : 'btn-ghost'}`} onClick={() => updateBg({ mode: m })}>{label}</button>
+            ))}
+            <button className="btn-ghost text-xs" onClick={pickBg} disabled={bgBusy}>{bgBusy ? '读取中…' : '⬆ 上传本地图片'}</button>
+          </div>
+        </Field>
+        {bgMsg && <div className={`text-xs mt-2 ${bgMsg.ok ? 'text-mc-green' : 'text-mc-red'}`}>{bgMsg.ok ? '✓ ' : '✗ '}{bgMsg.text}</div>}
+        {bg.mode === 'image' && (
+          <>
+            <Field label={`高斯模糊 · ${bg.blur}px`}>
+              <input type="range" min="0" max="40" value={bg.blur} onChange={e => updateBg({ blur: Number(e.target.value) })} className="w-full accent-accent" />
+            </Field>
+            <Field label={`毛玻璃遮罩 · ${Math.round(bg.overlayOpacity * 100)}%`}>
+              <input type="range" min="10" max="90" value={Math.round(bg.overlayOpacity * 100)} onChange={e => updateBg({ overlayOpacity: Number(e.target.value) / 100 })} className="w-full accent-accent" />
+            </Field>
+            {bg.imageDataUrl && (
+              <div className="flex items-center gap-3 mt-2">
+                <img src={bg.imageDataUrl} alt="背景预览" className="w-28 h-16 object-cover rounded-lg border border-white/10" style={{ filter: `blur(${Math.min(bg.blur, 4)}px)` }} />
+                <span className="text-[11px] text-slate-500">当前背景预览</span>
+                <button className="btn-ghost text-xs" onClick={() => updateBg({ imageDataUrl: null, mode: 'dark' })}>清除图片</button>
+              </div>
+            )}
+            {!bg.imageDataUrl && <div className="text-[11px] text-mc-gold mt-2">尚未选择图片，请点击「上传本地图片」（仅 PNG/JPEG/WebP/GIF，≤12MB）</div>}
+          </>
+        )}
+        {bg.mode === 'particles' && (
+          <Field label={`粒子数量 · ${bg.particleCount}`}>
+            <input type="range" min="20" max="200" value={bg.particleCount} onChange={e => updateBg({ particleCount: Number(e.target.value) })} className="w-full accent-accent" />
+            <div className="text-[11px] text-slate-600 mt-1">Canvas 实时绘制粒子漂移与近邻连线；系统开启「减少动态效果」时自动降为静态</div>
+          </Field>
+        )}
+      </div>
+
+      {/* 0.5.0 模块一：极客自定义面板（JVM 启动参数） */}
+      <div className="glass-panel p-6 max-w-3xl">
+        <div className="text-sm font-medium text-slate-300 mb-1">🛠 极客自定义面板 · JVM 启动参数</div>
+        <p className="text-xs text-slate-500 mb-3">
+          自定义 <span className="font-mono text-accent">-XX</span> / <span className="font-mono text-accent">-D</span> 参数；
+          <span className="font-mono">-Xmx/-Xms</span> 由上方内存设置统一托管（文本内书写会被自动忽略以避免冲突）。点「推荐配置」一键填入真实可用的 G1GC 参数。
+        </p>
+        <div className="flex flex-wrap gap-2 mb-3">
+          {profiles.map(p => (
+            <button key={p.id} title={p.desc}
+              className={`btn text-xs ${s.jvmProfileId === p.id ? 'btn-primary' : 'btn-ghost'}`}
+              onClick={() => updateMany({ jvmProfileId: p.id, minMemory: p.minMemory, maxMemory: p.maxMemory })}>
+              {p.name}
+            </button>
+          ))}
+          <button className="btn-primary text-xs" onClick={fillRecommended}>⚡ 一键填入推荐配置</button>
+          <button className="btn-ghost text-xs" onClick={() => updateMany({ jvmProfileId: null, extraJvmArgsText: '' })}>清空</button>
+        </div>
+        <textarea
+          rows={6} spellCheck={false}
+          className="w-full bg-base-900/60 border border-white/10 rounded-xl px-3 py-2 text-xs font-mono outline-none focus:border-accent/50 leading-relaxed"
+          placeholder={'-XX:+UseG1GC\n-XX:MaxGCPauseMillis=200\n-Dfml.readTimeout=60   # 支持 # 行内注释'}
+          value={s.extraJvmArgsText || ''}
+          onChange={e => update('extraJvmArgsText', e.target.value)}
+        />
+        {preview && (
+          <div className="mt-3 text-[11px] space-y-0.5">
+            <div className={preview.ok ? 'text-mc-green' : 'text-mc-red'}>
+              {preview.ok ? '✓' : '✗'} 最终生效 {preview.jvmArgs.length} 个 JVM 参数 · 内存 {preview.minMemory} – {preview.maxMemory}
+              {preview.profileId ? ` · 预设 ${preview.profileId}` : ''}
+            </div>
+            {(preview.issues || []).map((it, i) => (
+              <div key={i} className={it.severity === 'error' ? 'text-mc-red' : 'text-mc-gold'}>· {it.message}</div>
+            ))}
+          </div>
+        )}
       </div>
 
       <DownloadCard settings={settings} />
