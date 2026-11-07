@@ -110,3 +110,30 @@
 - 皮肤上传需用户显式配置 endpoint+token（LittleSkin 无公开稳定上传 API）。
 - 新功能 UI 聚焦桌面端；原生 APK 复用 0.2.0 JRE/GL4ES 启动链，两端共享 engine/ 源码。
 
+---
+
+## 🛠 全能管家 v0.4.0（2026-11-07）：生态扩展与真实环境适配
+
+> 在 0.3.0 之上平滑扩展，从「能启动」进化到「全能管家」。
+
+### 三大模块
+1. **真实 P2P 联机容错** `engine/net/guide.cjs` + 重写 `LobbyPage.jsx`：握手失败（运行 >10s 无 peer）自动弹窗「请检查防火墙/路由器 UDP 限制」；8 步排查向导、4 组分平台命令、UDP/TCP 11010 端口说明、EasyTier 官方链接。诊断只依据 `RoomManager.status()` 真实字段，不伪造「已连接」。
+2. **模组与资源包智能管家** `engine/mods/manager.cjs` + `ModsPage.jsx`：真实解析 jar 内 `fabric.mod.json` / `quilt.mod.json` / `mods.toml` / `neoforge.mods.toml` / `mcmod.info`；启用禁用真实 rename；缺失前置（Fabric API 等）标红 + 官方引导链接；光影/材质包一键导入（SHA-256 + Zip-Slip 防护）；Iris/Oculus/OptiFine 自动检测。
+3. **下载引擎多源加速** `engine/{sources,http,downloader}.*`：`mirrorFirstCandidates` 令 **BMCLAPI 首选 / Mojang 官方备用**（保留旧 `mirrorCandidates` 契约）；`backoffDelay` 指数退避（250→500→1000，上限 8000，可注入 sleepFn/jitter）；`onRetry` → `download:retry` 前端实时展示重试/换源。
+
+### 集成与移动端一致性
+- IPC 新增 12 个 channel（共 75 个），preload 新增 11 个桥接；React 新增 ModsPage、重写 LobbyPage、DownloadPage 展示源策略；Sidebar / MobileNav（新增「模组」入口）/ App 注册导航。
+- stubbed-Electron 端到端烟测：12/12 新 channel 注册 + 真实临时目录功能全通过。
+
+### 测试 / 构建 / 交付
+- 全量单测 **229 / 229 通过**（新增 download-accel 18 / mods 24 / net-guide 14）。
+- 桌面 `npm run build` → `MC-Next-0.4.0.AppImage`(109MB) + `.tar.gz`(103MB)。
+- Android 原生 APK `MC-Next-Native-0.4.0.apk`(71MB，54 个 .so，Gradle test+assemble 全绿)。
+- **Capacitor APK 首次构建踩坑并修复**：`cap sync` 每次覆盖为 `JavaVersion.VERSION_21`，JDK 20 报 `invalid source release: 21`；固化 `android-build/tools/build-capacitor.sh`（sync→sed 降 17→gradlew），重建 `BUILD SUCCESSFUL` 且校验内嵌本轮 `index-CPyRHu1v.js`，已删除误复制的旧包。
+- Release `mc-next-v0.4.0` 5 个产物 + gh-proxy 206 核验；源码 259 文件 → `main/launcher/`（commit `2be9e451`）；报告 `/workspace/DELIVERY-0.4.0.md`。
+
+### 边界（延续不糊弄原则）
+- 双节点真实 P2P 握手仍需公网/TUN/双设备环境人工验证，沙盒内未伪造成功。
+- 模组冲突为静态元数据检测，非游戏内加载结果；Capacitor APK 是 WebView 壳，能跑 MC 的是原生 APK。
+- AI「三国剧情」保持删除（按用户此前要求）；皮肤上传仍需显式 endpoint+token。
+
