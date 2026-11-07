@@ -97,6 +97,8 @@ function officialDownloadUrl(release, tag, filename) {
  */
 async function fetchLatestYml(release, opts) {
   const fetchImpl = opts.fetchImpl || ((...a) => fetch(...a));
+  // 官方直链在国内网络常「连接挂起」而非快速失败；必须设超时，否则自动回退形同虚设
+  const timeoutMs = Number(opts.timeoutMs) > 0 ? Number(opts.timeoutMs) : 8000;
   const official = latestYmlUrl(release, false);
   const mirror = latestYmlUrl(release, true);
   const hasMirror = !!release.mirror && mirror !== official;
@@ -109,7 +111,11 @@ async function fetchLatestYml(release, opts) {
   const attempts = [];
   for (const url of candidates) {
     try {
-      const resp = await fetchImpl(url, { headers: { 'User-Agent': 'MC-Next-Updater/0.6.0' } });
+      const init = { headers: { 'User-Agent': 'MC-Next-Updater/0.6.0' } };
+      if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+        init.signal = AbortSignal.timeout(timeoutMs);
+      }
+      const resp = await fetchImpl(url, init);
       attempts.push({ url, status: resp.status });
       if (!resp.ok) { lastError = `latest.yml 请求失败 HTTP ${resp.status}`; continue; }
       return { ok: true, url, text: await resp.text(), attempts };

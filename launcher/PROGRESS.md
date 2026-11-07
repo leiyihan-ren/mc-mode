@@ -174,8 +174,8 @@
 ## 🏆 商业级终极压榨 v0.6.0（2026-11-08）：六大模块全量落地
 
 > 从「优秀」推向「商业级」。每完成一个模块立刻本地 Commit 保存断点：
-> `9041673`(M1) → `6b06f80`(M2) → `0c28149`(M3) → `8254ce0`(M4) → `00795f9`(M5) → 模块六终局提交。
-> 既有 259 项测试零回归，全量 **327 / 327 通过**。
+> `9041673`(M1) → `6b06f80`(M2) → `0c28149`(M3) → `8254ce0`(M4) → `00795f9`(M5) → `efb2eda`(M6) → 超时防护收尾提交。
+> 既有 259 项测试零回归，全量 **328 / 328 通过**。
 
 ### 模块一：两端 UI 大一统（消除 WebView 壳技术债）
 - `tools/gen-bridge-contract.cjs` 从 `electron/preload.cjs` 自动解析，生成 Node / JSON / Java **三端同源契约**（最终 97 invoke / 15 event / 10 native），杜绝手工同步漂移。
@@ -203,7 +203,7 @@
 - `tools/gen-latest-yml.cjs` 从真实产物字节生成 `latest.yml`（sha512/size 非手写），作为 Release 资产供 `/releases/latest/download/latest.yml` 消费，形成闭环。
 
 ### 模块六：终局 TDD、生产构建与发布
-- 新增 `tests/oauth-device.test.cjs`（13）、`tests/jvm-monitor.test.cjs`（13）、`tests/modrinth.test.cjs`（15）、`tests/updater.test.cjs`（14）+ `tests/native-bridge.test.cjs`（13），全量 **327 / 327**。
+- 新增 `tests/oauth-device.test.cjs`（13）、`tests/jvm-monitor.test.cjs`（13）、`tests/modrinth.test.cjs`（15）、`tests/updater.test.cjs`（15）+ `tests/native-bridge.test.cjs`（13），全量 **328 / 328**；补 `fetchLatestYml` 请求超时（官方直链「连接挂起」时 8s 中断并回退镜像），真实公网实测 4s 超时 → 镜像 200 成功。
 - 桌面 `MC-Next-0.6.0.AppImage`(109MB) + `MC-Next-0.6.0.tar.gz`(103MB)；Android **正式版签名 APK** `MC-Next-Unified-0.6.0.apk`(100MB)：真实 PKCS12 keystore + gradle `signingConfigs.mcnextRelease` + `apksigner verify` 通过（v2 方案、RSA 2048、证书 SHA-256 `fd46b00e416a2bef…`）。
 - `versionName/versionCode` 由 package.json 归一（消除 `1.0` 占位）；`TitleBar` 版本号改为读 package.json 单一数据源。
 - Release `mc-next-v0.6.0` 五个产物（含 `latest.yml`），`make_latest=true`；源码推送 `main/launcher/`；报告 `/workspace/DELIVERY-0.6.0.md`。

@@ -261,3 +261,28 @@ test('checkForUpdate 消费真实生成的 latest.yml：判定升级且给出可
   assert.equal(U.verifySha512(appImage, r.sha512).ok, true);
   assert.match(r.officialUrl, /releases\/download\/mc-next-v0\.6\.0\/MC-Next-0\.6\.0\.AppImage$/);
 });
+
+test('fetchLatestYml：官方直链「连接挂起」时按超时中断并回退镜像，不会无限等待', async () => {
+  const seen = [];
+  const r = await U.checkForUpdate({
+    release, currentVersion: '0.5.0', timeoutMs: 25,
+    fetchImpl: async (url, init) => {
+      seen.push(url);
+      if (url.startsWith('https://gh-proxy.com/')) return resp(YML);
+      if (!init || !init.signal) throw new Error('缺少超时 signal');
+      return await new Promise((_, reject) => {
+        // 定时器保活事件循环（AbortSignal.timeout 的定时器是 unref 的），abort 先到则提前结束
+        const timer = setTimeout(() => reject(new Error('请求超时')), 60);
+        init.signal.addEventListener('abort', () => {
+          clearTimeout(timer);
+          reject(new Error('请求超时'));
+        }, { once: true });
+      });
+    }
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.updateAvailable, true);
+  assert.equal(seen.length, 2);
+  assert.match(r.source, /gh-proxy\.com/);
+  assert.match(r.attempts[0].error, /超时/);
+});
