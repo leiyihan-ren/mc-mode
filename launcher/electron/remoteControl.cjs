@@ -18,7 +18,12 @@ const http = require('http');
 const os = require('os');
 const path = require('path');
 const fs = require('fs');
-const { state, launchGameCore, logBuf } = require('./ipc.cjs');
+const { state, launchGameCore, logBuf, dispatchChannel, hasChannel } = require('./ipc.cjs');
+const { INVOKE_CHANNELS } = require('../engine/bridge/contract.cjs');
+
+const APP_VERSION = (() => {
+  try { return require('../package.json').version; } catch { return '0.0.0'; }
+})();
 
 const PORT = 25300;
 const REPO_CLIENT = '/workspace/MC正式版客户端';
@@ -63,7 +68,7 @@ async function handle(req, res) {
       json(res, 200, {
         ok: true,
         app: 'MC-Next',
-        version: '0.1.0',
+        version: APP_VERSION,
         running: !!(state.game && state.game.running),
         serverRunning: !!(state.server && !state.server.killed),
         ips: localIPs()
@@ -131,6 +136,29 @@ async function handle(req, res) {
       return;
     }
 
+    /**
+     * 0.6.0 模块一：通用远程 RPC。
+     * Android 大一统 UI 里所有「remote」落点的指令（76 条）都走这里，
+     * 复用桌面 registerIpc 注册的**同一个真实 handler**，结果与桌面 IPC 完全一致。
+     * 白名单来自 preload.cjs 自动生成的契约，拒绝任意未声明 channel。
+     * 返回 result 为 JSON 字符串（与 Capacitor 插件返回格式统一）。
+     */
+    if (req.method === 'POST' && url.pathname === '/api/rpc') {
+      const body = await readBody(req);
+      const channel = String(body.channel || '');
+      const args = Array.isArray(body.args) ? body.args : [];
+      if (!channel) { json(res, 400, { ok: false, error: '缺少 channel' }); return; }
+      if (!INVOKE_CHANNELS.includes(channel)) {
+        json(res, 403, { ok: false, error: `非法 channel: ${channel}` }); return;
+      }
+      if (!hasChannel(channel)) {
+        json(res, 503, { ok: false, error: `桌面端 IPC 尚未注册 ${channel}（主进程未就绪）` }); return;
+      }
+      const data = await dispatchChannel(channel, ...args);
+      json(res, 200, { ok: true, result: JSON.stringify(data === undefined ? null : data) });
+      return;
+    }
+
     json(res, 404, { ok: false, error: 'not found' });
   } catch (e) {
     json(res, 500, { ok: false, error: e.message });
@@ -149,4 +177,4 @@ function startRemoteControl() {
   return server;
 }
 
-module.exports = { startRemoteControl, localIPs, PORT };
+module.exports = { startRemoteControl, localIPs, PORT, handle };

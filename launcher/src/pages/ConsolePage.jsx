@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react'
 import { isMobile, remoteApi } from '../lib/remote.js'
+import PerfRadar from '../components/PerfRadar.jsx'
 
 const LEVEL_CLASS = {
   info: 'log-info',
@@ -118,6 +119,9 @@ export default function ConsolePage({ gameRunning, serverRunning }) {
           </div>
         </div>
       </header>
+
+      {/* 0.6.0 模块三：JVM 性能小雷达（真实 GC 日志 + /proc RSS，桌面端常驻） */}
+      {!isMobile && <PerfRadar />}
 
       {/* 工具栏 */}
       <div className="flex items-center gap-3 flex-wrap">

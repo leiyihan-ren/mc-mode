@@ -169,3 +169,49 @@
 - 推荐 JVM 参数为社区通用 G1GC 预设，实际收益因硬件 / 模组规模而异；内存始终由界面托管，自定义文本中的 `-Xmx/-Xms` 会被剥离而非覆盖。
 - 双节点真实 P2P 握手、LittleSkin 上传 API、AI 三国剧情延续此前边界：未伪造成功 / 保持删除。
 
+---
+
+## 🏆 商业级终极压榨 v0.6.0（2026-11-08）：六大模块全量落地
+
+> 从「优秀」推向「商业级」。每完成一个模块立刻本地 Commit 保存断点：
+> `9041673`(M1) → `6b06f80`(M2) → `0c28149`(M3) → `8254ce0`(M4) → `00795f9`(M5) → 模块六终局提交。
+> 既有 259 项测试零回归，全量 **327 / 327 通过**。
+
+### 模块一：两端 UI 大一统（消除 WebView 壳技术债）
+- `tools/gen-bridge-contract.cjs` 从 `electron/preload.cjs` 自动解析，生成 Node / JSON / Java **三端同源契约**（最终 97 invoke / 15 event / 10 native），杜绝手工同步漂移。
+- `src/lib/nativeBridge.js` 在 Capacitor WebView 注入同构 `window.mcnext`；native 指令直落 JNI，remote 指令 POST 到桌面 `/api/rpc`（复用真实 `ipc.cjs` handler）；`src/lib/remote.js` 修复 Android 也注入 `window.mcnext` 后的桌面端误判。
+- `android/bridge/jni/bridge_commands.c` 真实实现 `jvm.begin/end/status/requestStop`、`input.key/mouse/motion`、`render.env` 等底层动作，共享 `g_mcnext_vm` 真实状态；`NativeCommandRouter` 直连 `JvmBridge.launch()`（真实 `dlopen(libjvm.so)` + `JNI_CreateJavaVM`）。
+- `tools/build-unified-apk.sh` 九步真实构建 + 产物级校验（本轮 React bundle / JRE17 / GL4ES / JNI so / runtime modules 必须同时在 APK 内），不复制改名的旧包。
+
+### 模块二：微软 OAuth2 设备码真流程
+- `engine/auth/microsoft.cjs` 六步协议链路（RFC 8628 → XBL → XSTS → Minecraft Services → `/minecraft/profile`）接入 UI/IPC；`pollDeviceCode` 支持 `authorization_pending` / `slow_down` 退避 / `expired_token` / 取消钩子。
+- `engine/auth/deviceFlow.cjs` 状态机（`pending → polling → authorizing → success/error/expired/cancelled`）、账号持久化、当前账号切换；`publicAccount()` 剔除令牌。
+- `src/pages/AccountPage.jsx` 提供「📋 复制验证码并打开浏览器」+ 轮询状态卡片；`src/components/PlayerCard.jsx` 主页展示正版皮肤 / UUID / 名字。
+- 沙盒红线：`engine/auth/mockMicrosoft.cjs` 为**协议级 Mock**（`MOCK_` 前缀令牌、DemoPlayer），写 `accounts.json.mock.json` 与真实账号隔离，Mock 账号在 UI 明确标注「演示」。
+
+### 模块三：JVM 底层监控与一键调优
+- `engine/jvm/monitor.cjs`：stdout/stderr 日志汇入 `JvmMonitor`，解析 JDK9+ `-Xlog:gc*` 与 JDK8 `-verbose:gc`（GC pause / heap after / max），`/proc/<pid>/status` VmRSS 真实探针（非 Linux 明确返回 `null`，不伪造）。
+- `src/components/PerfRadar.jsx` SVG 折线图「性能小雷达」，真实采样；`src/pages/SettingsPage.jsx`「极客一键调优」按 `os.totalmem()` 分档生成 Xmx/Xms + 复用 v0.5.0 `G1_BASE`，并写入启动指令。
+
+### 模块四：Modrinth 在线资源生态
+- `engine/modrinth/client.cjs` 真实 v2 API（`/v2/search` facets、`/v2/project/{id}/version`、`/v2/version/{id}`），`resolveDependencies()` 递归 required 依赖 + 环检测 + 缺失上报；`installProject()` 官方 sha512 校验、路径穿越防护、`.part` 清理，落到 `mods/` / `shaderpacks/` / `resourcepacks/`。
+- `src/pages/ResourceCenterPage.jsx` 新增【资源中心】，导航接入 Sidebar / MobileNav / App。实测 API HTTP 200，Sodium 搜索 48 条、22 个版本。
+
+### 模块五：自动更新与分发
+- `engine/updater.cjs` 自研 electron-builder `latest.yml` 子集解析、真实 semver 比较、base64 sha512 `timingSafeEqual` 校验、**官方直链 → gh-proxy 镜像自动回退**（沙盒官方直链常超时）、Android `/releases/latest` 检查提示。
+- `electron/ipc.cjs` 后台静默下载 + `update:progress` 事件；`src/components/UpdateBanner.jsx` 挂载到 app shell，每次打开自动检查；Android `NativeCommandRouter` 只打开 Release 页、**不静默安装 APK**。
+- `tools/gen-latest-yml.cjs` 从真实产物字节生成 `latest.yml`（sha512/size 非手写），作为 Release 资产供 `/releases/latest/download/latest.yml` 消费，形成闭环。
+
+### 模块六：终局 TDD、生产构建与发布
+- 新增 `tests/oauth-device.test.cjs`（13）、`tests/jvm-monitor.test.cjs`（13）、`tests/modrinth.test.cjs`（15）、`tests/updater.test.cjs`（14）+ `tests/native-bridge.test.cjs`（13），全量 **327 / 327**。
+- 桌面 `MC-Next-0.6.0.AppImage`(109MB) + `MC-Next-0.6.0.tar.gz`(103MB)；Android **正式版签名 APK** `MC-Next-Unified-0.6.0.apk`(100MB)：真实 PKCS12 keystore + gradle `signingConfigs.mcnextRelease` + `apksigner verify` 通过（v2 方案、RSA 2048、证书 SHA-256 `fd46b00e416a2bef…`）。
+- `versionName/versionCode` 由 package.json 归一（消除 `1.0` 占位）；`TitleBar` 版本号改为读 package.json 单一数据源。
+- Release `mc-next-v0.6.0` 五个产物（含 `latest.yml`），`make_latest=true`；源码推送 `main/launcher/`；报告 `/workspace/DELIVERY-0.6.0.md`。
+
+### 边界（延续不糊弄原则）
+- **桌面签名**：Linux 沙盒无 Authenticode / Apple Developer ID 证书、无 `signtool` / `hdiutil` / `codesign`，**不产出声称已签名的 .exe / .dmg**。`tools/build-signed-desktop.sh` 固化真实 electron-builder 签名链路（`CSC_LINK` / `CSC_KEY_PASSWORD` / `APPLE_*`），在持证 Windows/macOS 构建机可复现；Apple 公证为独立步骤，脚本不谎称已完成。Linux AppImage/tar.gz 为未签名产物（Linux 生态无强制代码签名）。
+- **Android 签名**：为真实自签名证书（v2 验签通过），非 Google Play 上架签名；演示 keystore 密码仅为可复现默认，生产必须替换并保密。
+- 微软 OAuth2 真实浏览器授权、Mojang 真实 profile、Modrinth 真实下载、双节点 P2P 握手受沙盒网络限制，以协议级 Mock + 明确错误提示替代，**不伪造成功**。
+- 性能小雷达 RSS 依赖 Linux `/proc`，其他平台明确显示不可用；GC 曲线来自真实日志样本，无数据时不画模拟曲线。
+- Android 热更新仅检查提示，系统不允许静默安装 APK；桌面静默下载只到临时目录，校验通过也不自动替换安装。
+

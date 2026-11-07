@@ -128,11 +128,17 @@ class MicrosoftAuthenticator {
     return r.body; // {user_code, device_code, verification_uri, expires_in, interval}
   }
 
-  /** 轮询设备码直到用户完成授权 */
+  /** 轮询设备码直到用户完成授权（0.6.0：支持后台取消 + RFC 8628 slow_down 退避） */
   async pollDeviceCode(session, opts = {}) {
     const interval = (session.interval || 5) * 1000;
     const deadline = this._now() + (session.expires_in || 900) * 1000;
+    let delay = interval;
     while (this._now() < deadline) {
+      // 0.6.0：DeviceFlowManager 的「取消登录」通过此钩子在下一次轮询前真实中断死循环，
+      // 而不是让后台任务继续空转到过期。
+      if (opts.shouldContinue && !opts.shouldContinue()) {
+        throw new AuthError('设备码授权已取消', { stage: 'token', code: 'cancelled' });
+      }
       const r = await this._json(ENDPOINTS.token, this._form({
         client_id: this.clientId,
         grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
@@ -141,8 +147,10 @@ class MicrosoftAuthenticator {
       if (r.ok && r.body && r.body.access_token) return r.body;
       const err = r.body && r.body.error;
       if (err === 'authorization_pending' || err === 'slow_down') {
+        // RFC 8628：收到 slow_down 后每次轮询间隔必须再 +5s
+        if (err === 'slow_down') delay += 5000;
         if (opts.onPoll) opts.onPoll(err);
-        await this._sleep(interval);
+        await this._sleep(delay);
         continue;
       }
       if (err === 'expired_token') throw new AuthError('设备码已过期，请重新发起登录', { stage: 'token', code: err });

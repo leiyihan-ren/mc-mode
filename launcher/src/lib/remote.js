@@ -6,8 +6,11 @@
  */
 import { Capacitor, registerPlugin } from '@capacitor/core'
 
-export const isDesktop = typeof window !== 'undefined' && !!window.mcnext
-export const isMobile = !isDesktop && Capacitor.isNativePlatform?.()
+// 0.6.0：Android 大一统后 WebView 里也会有 window.mcnext（polyfill 注入），
+// 因此不能再用「有没有 mcnext」判断桌面端；以 Capacitor 是否原生平台为准。
+const nativeCapacitor = typeof window !== 'undefined' && !!Capacitor.isNativePlatform?.()
+export const isDesktop = typeof window !== 'undefined' && !!window.mcnext && !nativeCapacitor
+export const isMobile = !isDesktop && (nativeCapacitor || (typeof window !== 'undefined' && !!window.__MCNEXT_NATIVE__))
 
 /* ---------- PC 地址存取 ---------- */
 export function getPC() {

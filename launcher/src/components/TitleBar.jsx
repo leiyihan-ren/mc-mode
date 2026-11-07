@@ -1,4 +1,6 @@
 import React from 'react'
+// 0.6.0：版本号单一数据源，直接取 package.json，杜绝每次发版手工改 UI 字符串
+import pkg from '../../package.json'
 
 export default function TitleBar() {
   return (
@@ -8,7 +10,7 @@ export default function TitleBar() {
           MC
         </div>
         <span className="font-semibold tracking-wide text-slate-200">MC-Next</span>
-        <span className="tag bg-accent/10 text-accent border border-accent/20">v0.5.0</span>
+        <span className="tag bg-accent/10 text-accent border border-accent/20">v{pkg.version}</span>
       </div>
       <div className="no-drag flex items-center gap-2 text-xs text-slate-500">
         <span className="hidden sm:inline">Electron + React 全生态启动器</span>

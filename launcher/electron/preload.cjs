@@ -45,8 +45,15 @@ contextBridge.exposeInMainWorld('mcnext', {
   instanceRemove: (id) => ipcRenderer.invoke('instance:remove', id),
   // 模块二：账号（微软 OAuth2 / Authlib-Injector）
   authList: () => ipcRenderer.invoke('auth:list'),
-  authDeviceStart: () => ipcRenderer.invoke('auth:deviceStart'),
+  // 0.6.0 模块二：设备码真流程（申请 → 后台轮询 → 状态订阅 → 取消）
+  authDeviceStart: (opts) => ipcRenderer.invoke('auth:deviceStart', opts),
+  authDeviceBegin: (id) => ipcRenderer.invoke('auth:deviceBegin', id),
+  authDeviceStatus: (id) => ipcRenderer.invoke('auth:deviceStatus', id),
+  authDeviceCancel: (id) => ipcRenderer.invoke('auth:deviceCancel', id),
   authDeviceComplete: (id) => ipcRenderer.invoke('auth:deviceComplete', id),
+  onAuthDevice: (cb) => ipcRenderer.on('auth:deviceStatus', (_e, p) => cb(p)),
+  authCurrent: () => ipcRenderer.invoke('auth:current'),
+  authSelect: (uuid) => ipcRenderer.invoke('auth:select', uuid),
   authlibLogin: (o) => ipcRenderer.invoke('auth:authlibLogin', o),
   authlibMeta: (root) => ipcRenderer.invoke('auth:authlibMeta', root),
   authRemove: (uuid) => ipcRenderer.invoke('auth:remove', uuid),
@@ -122,6 +129,20 @@ contextBridge.exposeInMainWorld('mcnext', {
   appearanceValidate: (cfg) => ipcRenderer.invoke('appearance:validate', cfg),
   jvmProfiles: () => ipcRenderer.invoke('jvm:profiles'),
   jvmPreview: (o) => ipcRenderer.invoke('jvm:preview', o),
+  // 模块三（0.6.0）：JVM 实时监控 / 一键调优
+  jvmMonitorStatus: () => ipcRenderer.invoke('jvm:monitorStatus'),
+  jvmRecommend: () => ipcRenderer.invoke('jvm:recommend'),
+  onJvmMetrics: (cb) => ipcRenderer.on('jvm:metrics', (_e, p) => cb(p)),
+  // 模块四（0.6.0）：Modrinth 资源中心
+  modrinthSearch: (q) => ipcRenderer.invoke('modrinth:search', q),
+  modrinthVersions: (q) => ipcRenderer.invoke('modrinth:versions', q),
+  modrinthInstall: (o) => ipcRenderer.invoke('modrinth:install', o),
+  onModrinthProgress: (cb) => ipcRenderer.on('modrinth:progress', (_e, p) => cb(p)),
+  // 模块五（0.6.0）：自动更新（latest.yml / 静默下载 / Android 检查）
+  updateCheck: (o) => ipcRenderer.invoke('update:check', o),
+  updateStatus: () => ipcRenderer.invoke('update:status'),
+  updateDownload: (o) => ipcRenderer.invoke('update:download', o),
+  onUpdateProgress: (cb) => ipcRenderer.on('update:progress', (_e, p) => cb(p)),
   // 平台信息
   platform: process.platform,
   isRoot: typeof process.getuid === 'function' && process.getuid() === 0

@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { isMobile, remoteApi, getPC } from '../lib/remote.js'
+import PlayerCard from '../components/PlayerCard.jsx'
 
 /** 版本号排序：新→旧 */
 function verSort(a, b) {
@@ -161,6 +162,8 @@ export default function HomePage({ settings, setSettings, gameRunning, setGameRu
           <p className="text-sm text-slate-500 mt-1">选择本地仓库中的正式版客户端，一键启动（自动补全依赖）</p>
         </div>
         <div className="flex items-center gap-3">
+          {/* 0.6.0 模块二：微软正版档案（皮肤 / UUID / 名字）常驻主页 */}
+          <PlayerCard goto={goto} />
           {remoteMode ? (
             <div className={`glass-panel px-4 py-2 text-sm flex items-center gap-2 ${pcStatus ? 'text-mc-green' : 'text-slate-400'}`}>
               <span className={`w-2 h-2 rounded-full ${pcStatus ? 'bg-mc-green animate-pulse' : 'bg-slate-600'}`} />

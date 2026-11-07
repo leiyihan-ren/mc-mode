@@ -108,6 +108,10 @@ export default function SettingsPage({ settings, setSettings }) {
   const [bgMsg, setBgMsg] = useState(null)
   const [memCustom, setMemCustom] = useState('')
   const [memMsg, setMemMsg] = useState(null)
+  // 0.6.0 模块三：极客一键调优
+  const [tune, setTune] = useState(null)
+  const [tuneBusy, setTuneBusy] = useState(false)
+  const [tuneApplied, setTuneApplied] = useState(false)
   const mobile = isMobile
 
   useEffect(() => {
@@ -147,6 +151,27 @@ export default function SettingsPage({ settings, setSettings }) {
     setSettings({ ...s, ...patch })
     setSaved(true)
     setTimeout(() => setSaved(false), 1500)
+  }
+
+  /** 0.6.0 模块三：按本机物理内存生成最优 JVM 参数（真实 os.totalmem，不是写死数值） */
+  const runTune = async () => {
+    setTuneBusy(true); setTuneApplied(false)
+    try {
+      const a = window.mcnext
+      if (!a || typeof a.jvmRecommend !== 'function') { setTune({ ok: false, error: '当前环境不支持 JVM 调优' }); return }
+      setTune(await a.jvmRecommend())
+    } catch (e) { setTune({ ok: false, error: e.message }) }
+    finally { setTuneBusy(false) }
+  }
+  const applyTune = () => {
+    if (!tune || !tune.ok) return
+    updateMany({
+      jvmProfileId: tune.profileId,
+      minMemory: tune.minMemory,
+      maxMemory: tune.maxMemory,
+      extraJvmArgsText: tune.argsText
+    })
+    setTuneApplied(true)
   }
 
   // 动态背景配置（归一化默认值）
@@ -299,6 +324,45 @@ export default function SettingsPage({ settings, setSettings }) {
             <input type="range" min="20" max="200" value={bg.particleCount} onChange={e => updateBg({ particleCount: Number(e.target.value) })} className="w-full accent-accent" />
             <div className="text-[11px] text-slate-600 mt-1">Canvas 实时绘制粒子漂移与近邻连线；系统开启「减少动态效果」时自动降为静态</div>
           </Field>
+        )}
+      </div>
+
+      {/* 0.6.0 模块三：极客一键调优 */}
+      <div className="glass-panel p-6 max-w-3xl border-mc-green/20">
+        <div className="flex items-center justify-between mb-1">
+          <div className="text-sm font-medium text-slate-300">🚀 极客一键调优（按物理内存自动生成）</div>
+          <button className="btn-primary text-xs" onClick={runTune} disabled={tuneBusy}>
+            {tuneBusy ? '检测中…' : '检测并生成最优参数'}
+          </button>
+        </div>
+        <p className="text-xs text-slate-500 mb-3 leading-relaxed">
+          读取本机真实物理内存（os.totalmem），按 35% / 45% / 50% 分档计算 Xmx·Xms，套用真实可用的 Aikar 系 G1GC 参数，
+          经参数校验去重后<b className="text-slate-300">直接写入启动指令</b>（下次启动生效）。不会替你猜硬件、不会写死 4G。
+        </p>
+        {tune && !tune.ok && <div className="text-xs text-mc-red">调优失败：{tune.error || '参数校验未通过'}</div>}
+        {tune && tune.ok && (
+          <div className="space-y-2">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {[
+                ['物理内存', `${tune.totalMemMb} MB`],
+                ['推荐 Xmx', tune.maxMemory],
+                ['推荐 Xms', tune.minMemory],
+                ['G1 参数', `${tune.args.length} 个`]
+              ].map(([k, v]) => (
+                <div key={k} className="bg-base-900/60 border border-white/5 rounded-xl px-3 py-2">
+                  <div className="text-[10px] text-slate-600">{k}</div>
+                  <div className="text-sm font-mono text-accent">{v}</div>
+                </div>
+              ))}
+            </div>
+            <ul className="text-[11px] text-slate-500 space-y-0.5">
+              {tune.notes.map((n, i) => <li key={i}>· {n}</li>)}
+            </ul>
+            <div className="flex items-center gap-2">
+              <button className="btn-primary text-xs" onClick={applyTune}>⚡ 写入启动指令</button>
+              {tuneApplied && <span className="text-[11px] text-mc-green">✓ 已写入设置，下次启动生效（内存与参数均已同步）</span>}
+            </div>
+          </div>
         )}
       </div>
 

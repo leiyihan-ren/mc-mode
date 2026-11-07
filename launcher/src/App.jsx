@@ -16,9 +16,11 @@ import WorldManagerPage from './pages/WorldManagerPage.jsx'
 import SkinPage from './pages/SkinPage.jsx'
 import ModsPage from './pages/ModsPage.jsx'
 import InstancePage from './pages/InstancePage.jsx'
+import ResourceCenterPage from './pages/ResourceCenterPage.jsx'
 import MobileNav from './components/MobileNav.jsx'
 import BackgroundLayer from './components/BackgroundLayer.jsx'
 import LaunchTransition from './components/LaunchTransition.jsx'
+import UpdateBanner from './components/UpdateBanner.jsx'
 import { isMobile } from './lib/remote.js'
 
 export default function App() {
@@ -62,7 +64,8 @@ export default function App() {
     server: ServerPage, account: AccountPage, modpack: ModpackPage,
     localjar: LocalJarPage, crash: CrashPage,
     java: JavaManagerPage, lobby: LobbyPage, world: WorldManagerPage,
-    skin: SkinPage, mods: ModsPage, instances: InstancePage, settings: SettingsPage
+    skin: SkinPage, mods: ModsPage, instances: InstancePage,
+    resources: ResourceCenterPage, settings: SettingsPage
   }
   const Page = pages[page] || HomePage
 
@@ -71,6 +74,7 @@ export default function App() {
       <BackgroundLayer config={settings.background} />
       <div className={`app-shell flex flex-col ${launchFx ? 'app-shell-launching' : ''}`}>
         {!isMobile && <TitleBar />}
+        <UpdateBanner />
         <div className="flex-1 flex min-h-0">
           {!isMobile && (
             <Sidebar

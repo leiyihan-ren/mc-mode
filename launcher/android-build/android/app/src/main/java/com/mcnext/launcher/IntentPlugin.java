@@ -9,10 +9,7 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
-/**
- * IntentBridge — 通过 Android Intent 唤起手机上已安装的第三方 MC 启动器
- * （PojavLauncher / FCL 等），以及任意 market 链接。
- */
+/** IntentBridge — 唤起第三方 MC 启动器 / 打开外部链接（大一统 APK 保留的原生能力）。 */
 @CapacitorPlugin(name = "IntentBridge")
 public class IntentPlugin extends Plugin {
 
@@ -32,10 +29,9 @@ public class IntentPlugin extends Plugin {
                 return;
             }
         }
-        // 未安装 → 跳转应用商店搜索
         try {
             Intent market = new Intent(Intent.ACTION_VIEW,
-                Uri.parse("market://search?q=" + pkg + "&c=apps"));
+                    Uri.parse("market://search?q=" + pkg + "&c=apps"));
             market.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             ctx.startActivity(market);
             call.reject("APP_NOT_FOUND_OPENED_MARKET");
@@ -47,9 +43,8 @@ public class IntentPlugin extends Plugin {
     @PluginMethod
     public void isInstalled(PluginCall call) {
         String pkg = call.getString("packageName", "net.kdt.pojavlaunch");
-        android.content.Context ctx = getBridge().getContext();
         try {
-            ctx.getPackageManager().getPackageInfo(pkg, 0);
+            getBridge().getContext().getPackageManager().getPackageInfo(pkg, 0);
             JSObject ret = new JSObject();
             ret.put("installed", true);
             call.resolve(ret);

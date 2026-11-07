@@ -33,9 +33,15 @@ const netGuide = require('../engine/net/guide.cjs');
 // —— 极致体验模块（0.5.0）——
 const appearance = require('../engine/appearance.cjs');
 const modpackExport = require('../engine/modpackExport.cjs');
+// —— 商业级模块（0.6.0）——
+const { DeviceFlowManager } = require('../engine/auth/deviceFlow.cjs');
+const jvmMonitorMod = require('../engine/jvm/monitor.cjs');
+const modrinth = require('../engine/modrinth/client.cjs');
+const updater = require('../engine/updater.cjs');
 const releaseCfg = require('../config/release.json');
 
-const HOME = require('os').homedir();
+const os = require('os');
+const HOME = os.homedir();
 const LAUNCHER_DIR = path.join(HOME, '.mc-next');
 const GAME_DIR = path.join(LAUNCHER_DIR, 'game');
 const LIBRARIES_DIR = path.join(LAUNCHER_DIR, 'libraries');
@@ -43,8 +49,41 @@ const ASSETS_DIR = path.join(LAUNCHER_DIR, 'assets');
 const REPO_CLIENT = '/workspace/MC正式版客户端';
 const REPO_SERVER = '/workspace/MC正式版服务端';
 
+/** 0.6.0 模块二：设备码会话管理器（模块级单例，后台轮询跨 IPC 调用持续存活） */
+const authFlow = new DeviceFlowManager({
+  storeFile: path.join(LAUNCHER_DIR, 'accounts.json'),
+  currentFile: path.join(LAUNCHER_DIR, 'current-account.json'),
+  mock: process.env.MCNEXT_AUTH_MOCK === '1',
+  onStatus: (view) => send('auth:deviceStatus', view)
+});
+
+/** 0.6.0 模块三：当前游戏的 JVM 监控器（进程级单例，退出自动停止） */
+let jvmMonitor = null;
+/** 0.6.0 模块五：后台静默下载状态（跨 IPC 调用保持） */
+const updateState = { downloading: false, last: null };
+
 /** 运行状态（模块级单例） */
 const state = { game: null, server: null, mainWindow: null };
+
+/**
+ * 0.6.0 模块一：统一 IPC handler 注册表。
+ * 桌面端照常 ipcMain.handle；Android 大一统 UI 的 remote 指令通过
+ * /api/rpc → dispatchChannel() 复用**同一个真实 handler**，不重写、不伪造。
+ * 只有 registerIpc 执行过（即 Electron 主进程已启动）后表中才有条目。
+ */
+const HANDLERS = new Map();
+function handle(channel, fn) {
+  HANDLERS.set(channel, fn);
+  return ipcMain.handle(channel, fn);
+}
+
+/** 按 channel 直接调用已注册的真实 handler（供远程 RPC / 测试复用） */
+async function dispatchChannel(channel, ...args) {
+  const fn = HANDLERS.get(channel);
+  if (!fn) throw new Error(`未注册的 IPC channel: ${channel}`);
+  return fn(null, ...args);
+}
+function hasChannel(channel) { return HANDLERS.has(channel); }
 /** 联机大厅管理器（长生命周期，跨 IPC 调用保持同一实例） */
 const netState = { manager: null };
 function getRoomManager() {
@@ -121,6 +160,14 @@ async function launchGameCore(opts) {
       send('game:log', { level: 'info', text: `[MC-Next] 附加 ${jvm.jvmArgs.length} 个自定义 JVM 参数${jvm.profileId ? `（预设 ${jvm.profileId}）` : ''}` });
     }
 
+    // 0.6.0 模块三：自动注入真实 GC 日志参数（用户已自行配置 GC 日志时不覆盖）
+    const extraJvmArgs = jvm.jvmArgs.slice();
+    const hasGcLogging = extraJvmArgs.some(a => /^-Xlog|gc/i.test(a));
+    if (!hasGcLogging) extraJvmArgs.push(...jvmMonitorMod.gcArgsForMcVersion(opts.versionId));
+    if (extraJvmArgs.length > jvm.jvmArgs.length) {
+      send('game:log', { level: 'info', text: `[MC-Next] 已启用 GC 日志：${extraJvmArgs.slice(jvm.jvmArgs.length).join(' ')}` });
+    }
+
     const launcher = new GameLauncher({
       versionJson: vj,
       classpath: cp.classpath.join(process.platform === 'win32' ? ';' : ':'),
@@ -135,7 +182,7 @@ async function launchGameCore(opts) {
       uuid: opts.uuid,
       versionId: opts.versionId,
       versionType: 'MC-Next',
-      extraJvmArgs: jvm.jvmArgs,
+      extraJvmArgs,
       env
     });
     launcher.on('log', l => send('game:log', l));
@@ -143,7 +190,15 @@ async function launchGameCore(opts) {
     launcher.on('error', e => send('game:log', { level: 'error', text: String(e) }));
     state.game = launcher;
     launcher.launch();
-    return { ok: true, missingCount: cp.missing.length };
+
+    // 0.6.0 模块三：挂载 JVM 监控。GameLauncher 已把 stdout/stderr 汇成 log 事件，
+    // 监控器逐行解析 GC 日志，并按 1s 采样 /proc/<pid>/status 的 VmRSS 推给性能小雷达。
+    if (jvmMonitor) jvmMonitor.stop();
+    jvmMonitor = new jvmMonitorMod.JvmMonitor({ pid: launcher.process && launcher.process.pid });
+    jvmMonitor.on('sample', (s) => send('jvm:metrics', s));
+    jvmMonitor.attach(launcher);
+
+    return { ok: true, missingCount: cp.missing.length, monitorPid: jvmMonitor.pid };
   } catch (e) {
     return { ok: false, error: e.message };
   }
@@ -153,19 +208,19 @@ function registerIpc(mainWindow) {
   state.mainWindow = mainWindow;
 
   // ---------- 本地仓库 ----------
-  ipcMain.handle('repo:listClients', async () => {
+  handle('repo:listClients', async () => {
     try {
       return fs.readdirSync(REPO_CLIENT).filter(f => f.endsWith('.jar')).sort().reverse();
     } catch { return []; }
   });
 
-  ipcMain.handle('repo:listServers', async () => {
+  handle('repo:listServers', async () => {
     try {
       return fs.readdirSync(REPO_SERVER).filter(f => f.endsWith('.jar')).sort().reverse();
     } catch { return []; }
   });
 
-  ipcMain.handle('repo:listLoaderFiles', async (evt, mcVersion) => {
+  handle('repo:listLoaderFiles', async (evt, mcVersion) => {
     const out = [];
     const dir = path.join('/workspace/模组加载器', mcVersion);
     if (!fs.existsSync(dir)) return out;
@@ -174,11 +229,11 @@ function registerIpc(mainWindow) {
   });
 
   // ---------- 版本清单 ----------
-  ipcMain.handle('manifest:fetch', async () => {
+  handle('manifest:fetch', async () => {
     return fetchJson(OFFICIAL.versionManifest, { timeoutMs: 30000 });
   });
 
-  ipcMain.handle('version:getJson', async (evt, versionId) => {
+  handle('version:getJson', async (evt, versionId) => {
     const cache = path.join(LAUNCHER_DIR, 'versions', `${versionId}.json`);
     fs.mkdirSync(path.dirname(cache), { recursive: true });
     if (fs.existsSync(cache)) return JSON.parse(fs.readFileSync(cache, 'utf8'));
@@ -188,8 +243,8 @@ function registerIpc(mainWindow) {
   });
 
   // ---------- 下载（0.4.0：BMCLAPI 首选 + 指数退避 + 重试事件） ----------
-  ipcMain.handle('download:sources', async () => SOURCE_POLICY);
-  ipcMain.handle('download:start', async (evt, { id, url, dest, sha1, size }) => {
+  handle('download:sources', async () => SOURCE_POLICY);
+  handle('download:start', async (evt, { id, url, dest, sha1, size }) => {
     try {
       const r = await downloadFile(url, dest, {
         expectedSha1: sha1,
@@ -206,19 +261,19 @@ function registerIpc(mainWindow) {
   });
 
   // ---------- 游戏启动 ----------
-  ipcMain.handle('game:launch', async (evt, opts) => launchGameCore(opts));
+  handle('game:launch', async (evt, opts) => launchGameCore(opts));
 
-  ipcMain.handle('game:stop', async () => {
+  handle('game:stop', async () => {
     if (state.game) { await state.game.kill(); state.game = null; return { ok: true }; }
     return { ok: false, error: '无运行中的游戏' };
   });
 
-  ipcMain.handle('game:status', async () => !!(state.game && state.game.running));
+  handle('game:status', async () => !!(state.game && state.game.running));
 
   // ---------- 服务端 ----------
-  ipcMain.handle('server:detect', async (evt, jarPath) => detectJarKind(jarPath));
+  handle('server:detect', async (evt, jarPath) => detectJarKind(jarPath));
 
-  ipcMain.handle('server:deploy', async (evt, { jarPath, workDir, memory, javaPath }) => {
+  handle('server:deploy', async (evt, { jarPath, workDir, memory, javaPath }) => {
     try {
       const r = await deployServer(jarPath, workDir, { memory: memory || '4G', javaPath: javaPath || 'java' });
       // Fabric launcherMeta 可用时记录 -cp 启动信息（asm/sponge-mixin 必须入 classpath）
@@ -231,7 +286,7 @@ function registerIpc(mainWindow) {
     }
   });
 
-  ipcMain.handle('server:start', async (evt, { workDir, coreJar, memory, javaPath }) => {
+  handle('server:start', async (evt, { workDir, coreJar, memory, javaPath }) => {
     try {
       if (state.server && state.server.running) return { ok: false, error: '服务端已在运行' };
       const { spawn } = require('child_process');
@@ -261,7 +316,7 @@ function registerIpc(mainWindow) {
     }
   });
 
-  ipcMain.handle('server:stop', async () => {
+  handle('server:stop', async () => {
     if (state.server) {
       state.server.kill('SIGTERM');
       state.server = null;
@@ -270,7 +325,7 @@ function registerIpc(mainWindow) {
     return { ok: false, error: '无运行中的服务端' };
   });
 
-  ipcMain.handle('server:command', async (evt, cmd) => {
+  handle('server:command', async (evt, cmd) => {
     if (state.server && state.server.stdin && state.server.stdin.writable) {
       state.server.stdin.write(cmd + '\n');
       return { ok: true };
@@ -278,10 +333,10 @@ function registerIpc(mainWindow) {
     return { ok: false, error: '服务端未运行' };
   });
 
-  ipcMain.handle('server:status', async () => !!(state.server && !state.server.killed));
+  handle('server:status', async () => !!(state.server && !state.server.killed));
 
   // ---------- 对话框 ----------
-  ipcMain.handle('dialog:pickJar', async () => {
+  handle('dialog:pickJar', async () => {
     const r = await dialog.showOpenDialog(mainWindow, {
       title: '选择 Jar 文件',
       filters: [{ name: 'Jar', extensions: ['jar'] }],
@@ -290,7 +345,7 @@ function registerIpc(mainWindow) {
     return r.canceled ? null : r.filePaths[0];
   });
 
-  ipcMain.handle('dialog:pickDir', async () => {
+  handle('dialog:pickDir', async () => {
     const r = await dialog.showOpenDialog(mainWindow, {
       title: '选择目录',
       properties: ['openDirectory', 'createDirectory']
@@ -298,7 +353,7 @@ function registerIpc(mainWindow) {
     return r.canceled ? null : r.filePaths[0];
   });
 
-  ipcMain.handle('dialog:pickFile', async (evt, exts = ['mrpack', 'zip', 'json']) => {
+  handle('dialog:pickFile', async (evt, exts = ['mrpack', 'zip', 'json']) => {
     const r = await dialog.showOpenDialog(mainWindow, {
       title: '选择整合包 / 配置文件',
       filters: [{ name: '整合包', extensions: exts }],
@@ -308,19 +363,18 @@ function registerIpc(mainWindow) {
   });
 
   // ==================== 模块二：极致版本隔离 ====================
-  ipcMain.handle('instance:list', async () => isolation.listInstances(LAUNCHER_DIR));
-  ipcMain.handle('instance:create', async (evt, o) =>
+  handle('instance:list', async () => isolation.listInstances(LAUNCHER_DIR));
+  handle('instance:create', async (evt, o) =>
     isolation.ensureInstance(LAUNCHER_DIR, o.id, {
       name: o.name, gameVersion: o.gameVersion, loader: o.loader
     }));
-  ipcMain.handle('instance:info', async (evt, id) => isolation.instanceInfo(LAUNCHER_DIR, id));
-  ipcMain.handle('instance:args', async (evt, id, extras) =>
+  handle('instance:info', async (evt, id) => isolation.instanceInfo(LAUNCHER_DIR, id));
+  handle('instance:args', async (evt, id, extras) =>
     isolation.buildInstanceArgs(LAUNCHER_DIR, id, extras || {}));
-  ipcMain.handle('instance:remove', async (evt, id) => isolation.removeInstance(LAUNCHER_DIR, id));
+  handle('instance:remove', async (evt, id) => isolation.removeInstance(LAUNCHER_DIR, id));
 
-  // ==================== 模块二：微软正版 OAuth2 + Authlib-Injector ====================
-  const ms = new msAuth.MicrosoftAuthenticator({ storeFile: path.join(LAUNCHER_DIR, 'accounts.json') });
-  const deviceSessions = new Map();
+  // ============ 0.6.0 模块二：微软正版 OAuth2 设备码真流程 + Authlib-Injector ============
+  const ms = authFlow.authenticator;   // 复用同一账号仓库（launchArgs / remove / ensureValid）
   const authlibFile = path.join(LAUNCHER_DIR, 'accounts-authlib.json');
   const readAuthlib = () => {
     try { return JSON.parse(fs.readFileSync(authlibFile, 'utf8')); } catch { return []; }
@@ -330,35 +384,26 @@ function registerIpc(mainWindow) {
     fs.writeFileSync(authlibFile, JSON.stringify(list, null, 2), { mode: 0o600 });
   };
 
-  ipcMain.handle('auth:list', async () => {
-    const microsoft = ms.listAccounts().map(a => ({ ...a, type: 'microsoft' }));
-    const third = readAuthlib().map(a => ({ ...a, type: 'authlib' }));
-    return [...microsoft, ...third].map(({ msAccessToken, msRefreshToken, ...safe }) => ({
-      ...safe, hasRefresh: !!msRefreshToken
-    }));
+  handle('auth:list', async () => {
+    // 只回传展示所需字段，令牌永不出主进程
+    const microsoft = authFlow.list();
+    const third = readAuthlib().map(a => ({ ...a, type: 'authlib', hasRefresh: false }));
+    return [...microsoft, ...third];
   });
 
-  ipcMain.handle('auth:deviceStart', async () => {
-    const session = await ms.createDeviceCodeSession();
-    const id = crypto.randomUUID();
-    deviceSessions.set(id, session);
-    return {
-      id, userCode: session.user_code,
-      verificationUri: session.verification_uri, expiresIn: session.expires_in
-    };
-  });
+  // 第 1 步：申请设备码（真实 login.microsoftonline.com；mock:true 为明确标注的离线演示）
+  handle('auth:deviceStart', async (evt, opts = {}) => authFlow.start(opts || {}));
+  // 第 2 步：后台死循环轮询（立即返回，不阻塞渲染层）
+  handle('auth:deviceBegin', async (evt, id) => authFlow.beginPolling(id));
+  handle('auth:deviceStatus', async (evt, id) => authFlow.status(id));
+  handle('auth:deviceCancel', async (evt, id) => authFlow.cancel(id));
+  // 兼容旧 UI：发起并等待完成
+  handle('auth:deviceComplete', async (evt, id) => authFlow.complete(id));
+  // 主页正版玩家卡片 / 账号切换
+  handle('auth:current', async () => authFlow.current());
+  handle('auth:select', async (evt, uuid) => authFlow.select(uuid));
 
-  ipcMain.handle('auth:deviceComplete', async (evt, id) => {
-    const session = deviceSessions.get(id);
-    if (!session) throw new Error('设备码会话不存在或已过期，请重新发起登录');
-    const token = await ms.pollDeviceCode(session);
-    const account = await ms.authenticateWithMsToken(token);
-    ms.saveAccount(account);
-    deviceSessions.delete(id);
-    return { uuid: account.uuid, name: account.name, type: 'microsoft' };
-  });
-
-  ipcMain.handle('auth:authlibLogin', async (evt, { apiRoot, username, password }) => {
+  handle('auth:authlibLogin', async (evt, { apiRoot, username, password }) => {
     const account = await authlib.authenticate(apiRoot, { username, password });
     const list = readAuthlib().filter(a => !(a.uuid === account.uuid && a.apiRoot === apiRoot));
     list.push(account);
@@ -366,13 +411,13 @@ function registerIpc(mainWindow) {
     return { uuid: account.uuid, name: account.name, type: 'authlib', apiRoot };
   });
 
-  ipcMain.handle('auth:authlibMeta', async (evt, apiRoot) => authlib.fetchMetadata(apiRoot));
-  ipcMain.handle('auth:remove', async (evt, uuid) => {
+  handle('auth:authlibMeta', async (evt, apiRoot) => authlib.fetchMetadata(apiRoot));
+  handle('auth:remove', async (evt, uuid) => {
     ms.deleteAccount(uuid);
     writeAuthlib(readAuthlib().filter(a => a.uuid !== uuid));
     return { ok: true };
   });
-  ipcMain.handle('auth:launchArgs', async (evt, uuid) => {
+  handle('auth:launchArgs', async (evt, uuid) => {
     const a = ms.listAccounts().find(x => x.uuid === uuid);
     if (a) return msAuth.toLaunchArgs(await ms.ensureValid(a));
     const b = readAuthlib().find(x => x.uuid === uuid);
@@ -381,7 +426,7 @@ function registerIpc(mainWindow) {
   });
 
   // ==================== 模块二：多源并发下载 ====================
-  ipcMain.handle('download:batch', async (evt, { tasks, concurrency, preferMirror, backoffBaseMs }) => {
+  handle('download:batch', async (evt, { tasks, concurrency, preferMirror, backoffBaseMs }) => {
     return downloadBatch(tasks, {
       concurrency: concurrency || 8,
       preferMirror: preferMirror !== false,
@@ -391,24 +436,24 @@ function registerIpc(mainWindow) {
   });
 
   // ==================== 模块二：整合包一键安装（0.5.0 带依赖预检硬拦截） ====================
-  ipcMain.handle('modpack:parse', async (evt, filePath) => modpack.parseModpack(filePath));
+  handle('modpack:parse', async (evt, filePath) => modpack.parseModpack(filePath));
   // 拖拽导入：接收 base64 文件字节（避免依赖 file.path 在 WebView / Capacitor 下不可用）
-  ipcMain.handle('modpack:parseBuffer', async (evt, { base64 } = {}) => {
+  handle('modpack:parseBuffer', async (evt, { base64 } = {}) => {
     if (!base64 || typeof base64 !== 'string') return { ok: false, error: '拖拽文件为空' };
     try {
       const plan = modpack.parseModpack(Buffer.from(base64, 'base64'));
       return { ok: true, plan, describe: modpackExport.describeModpack(plan) };
     } catch (e) { return { ok: false, error: e.message }; }
   });
-  ipcMain.handle('modpack:describe', async (evt, plan) => {
+  handle('modpack:describe', async (evt, plan) => {
     try { return { ok: true, ...modpackExport.describeModpack(plan) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
-  ipcMain.handle('modpack:preflight', async (evt, plan) => {
+  handle('modpack:preflight', async (evt, plan) => {
     try { return { ok: true, ...modpackExport.preflightImport(plan) }; }
     catch (e) { return { ok: false, error: e.message }; }
   });
-  ipcMain.handle('modpack:install', async (evt, { plan, instanceId, apiKey, force } = {}) => {
+  handle('modpack:install', async (evt, { plan, instanceId, apiKey, force } = {}) => {
     try {
       return await modpackExport.installWithPreflight({
         plan, root: LAUNCHER_DIR, instanceId,
@@ -420,7 +465,7 @@ function registerIpc(mainWindow) {
   });
 
   // ==================== 模块二（0.5.0）：整合包一键导出 / 分享 ====================
-  ipcMain.handle('modpack:export', async (evt, { instanceId, name, versionId, includePacks } = {}) => {
+  handle('modpack:export', async (evt, { instanceId, name, versionId, includePacks } = {}) => {
     try {
       const r = dialog.showSaveDialogSync(mainWindow, {
         title: '导出整合包（.mrpack）',
@@ -436,7 +481,7 @@ function registerIpc(mainWindow) {
       return safe;
     } catch (e) { return { ok: false, error: e.message }; }
   });
-  ipcMain.handle('modpack:readManifest', async (evt, filePath) => {
+  handle('modpack:readManifest', async (evt, filePath) => {
     try {
       const m = modpackExport.readExportManifest(filePath);
       return m ? { ok: true, manifest: m } : { ok: false, error: '该包不含 MC-Next 自描述清单' };
@@ -444,8 +489,8 @@ function registerIpc(mainWindow) {
   });
 
   // ==================== 模块三：本地 Jar 智能解析与合并 ====================
-  ipcMain.handle('localJar:inspect', async (evt, p) => localJar.inspectJar(p));
-  ipcMain.handle('localJar:plan', async (evt, o) => localJar.buildLocalLaunchPlan({
+  handle('localJar:inspect', async (evt, p) => localJar.inspectJar(p));
+  handle('localJar:plan', async (evt, o) => localJar.buildLocalLaunchPlan({
     gameJar: o.gameJar,
     loaderJars: o.loaderJars || [],
     libraries: o.libraries || [],
@@ -453,25 +498,25 @@ function registerIpc(mainWindow) {
   }));
 
   // ==================== 模块三：硬核终端日志（彩色高亮） ====================
-  ipcMain.handle('console:highlight', async (evt, raw) => highlight(raw));
-  ipcMain.handle('console:highlightBatch', async (evt, lines) =>
+  handle('console:highlight', async (evt, raw) => highlight(raw));
+  handle('console:highlightBatch', async (evt, lines) =>
     (lines || []).map(l => highlight(String(l))));
-  ipcMain.handle('console:parse', async (evt, raw) => parseLogLine(raw));
+  handle('console:parse', async (evt, raw) => parseLogLine(raw));
 
   // ==================== 模块四：崩溃分析与日志净化 ====================
-  ipcMain.handle('crash:analyze', async (evt, o) => crashAnalyzer.analyzeCrash(o));
-  ipcMain.handle('crash:clean', async (evt, text) => {
+  handle('crash:analyze', async (evt, o) => crashAnalyzer.analyzeCrash(o));
+  handle('crash:clean', async (evt, text) => {
     const r = logCleaner.cleanLatestLog(text, { maxLines: 120 });
     return { ...r, report: logCleaner.toPlainTextReport(r) };
   });
-  ipcMain.handle('crash:readLatestLog', async (evt, gameDir) => {
+  handle('crash:readLatestLog', async (evt, gameDir) => {
     const p = path.join(gameDir || GAME_DIR, 'logs', 'latest.log');
     if (!fs.existsSync(p)) return { ok: false, error: `未找到 ${p}` };
     return { ok: true, path: p, text: fs.readFileSync(p, 'utf8') };
   });
 
   // ==================== 移动端启动配置导出（供原生 APK 的 launch.json） ====================
-  ipcMain.handle('mobile:export', async (evt, cfg) => {
+  handle('mobile:export', async (evt, cfg) => {
     const r = await dialog.showOpenDialog(mainWindow, {
       title: '选择导出目录',
       properties: ['openDirectory', 'createDirectory']
@@ -483,7 +528,7 @@ function registerIpc(mainWindow) {
   });
 
   // ==================== 真实 GitHub Release 绝对链接 ====================
-  ipcMain.handle('app:release', async () => {
+  handle('app:release', async () => {
     const base = `${releaseCfg.repo}/releases/download/${releaseCfg.tag}`;
     return {
       page: `${releaseCfg.repo}/releases/tag/${releaseCfg.tag}`,
@@ -497,24 +542,24 @@ function registerIpc(mainWindow) {
       mirrorApk: `${releaseCfg.mirror || ''}${base}/${releaseCfg.assets.apk}`
     };
   });
-  ipcMain.handle('app:openExternal', async (evt, url) => {
+  handle('app:openExternal', async (evt, url) => {
     if (!/^https:\/\//.test(url)) return { ok: false, error: '仅允许 https 外链' };
     await shell.openExternal(url);
     return { ok: true };
   });
 
   // ==================== 模块一：Java 运行环境智能管家 ====================
-  ipcMain.handle('java:scan', async (evt, { extraRoots } = {}) => {
+  handle('java:scan', async (evt, { extraRoots } = {}) => {
     const r = javaMgr.scanLocalJava({ extraRoots: extraRoots || [] });
     return { ok: true, ...r };
   });
-  ipcMain.handle('java:required', async (evt, mcVersion) => javaMgr.requiredJava(mcVersion));
-  ipcMain.handle('java:select', async (evt, { mcVersion, extraRoots }) => {
+  handle('java:required', async (evt, mcVersion) => javaMgr.requiredJava(mcVersion));
+  handle('java:select', async (evt, { mcVersion, extraRoots }) => {
     const local = javaMgr.scanLocalJava({ extraRoots: extraRoots || [] });
     const picked = javaMgr.selectJava(local.list, mcVersion);
     return { ...picked, all: local.list };
   });
-  ipcMain.handle('java:install', async (evt, { major, root } = {}) => {
+  handle('java:install', async (evt, { major, root } = {}) => {
     try {
       const rec = await javaMgr.installJava(major, { root, onProgress: (p) => send('java:progress', p) });
       return { ok: true, java: rec };
@@ -522,53 +567,53 @@ function registerIpc(mainWindow) {
   });
 
   // ==================== 模块二：一键联机大厅（EasyTier P2P） ====================
-  ipcMain.handle('lan:binaries', async () => {
+  handle('lan:binaries', async () => {
     const b = lanRoom.defaultBinaries();
     return { ...b, verified: b.core ? await lanRoom.verifyBinary(b.core) : { ok: false, error: '未找到 easytier-core' } };
   });
-  ipcMain.handle('lan:verify', async (evt, corePath) => lanRoom.verifyBinary(corePath));
-  ipcMain.handle('lan:create', async (evt, opts = {}) => {
+  handle('lan:verify', async (evt, corePath) => lanRoom.verifyBinary(corePath));
+  handle('lan:create', async (evt, opts = {}) => {
     const { room, inviteCode } = lanRoom.createRoom(opts);
     return { room, inviteCode };
   });
-  ipcMain.handle('lan:join', async (evt, { inviteCode, ...opts } = {}) => {
+  handle('lan:join', async (evt, { inviteCode, ...opts } = {}) => {
     const { room, inviteCode: code } = lanRoom.joinRoom(inviteCode, opts);
     return { room, inviteCode: code };
   });
-  ipcMain.handle('lan:start', async (evt, { room, ...opts } = {}) => getRoomManager().start(room, opts));
-  ipcMain.handle('lan:stop', async () => getRoomManager().stop());
-  ipcMain.handle('lan:status', async () => {
+  handle('lan:start', async (evt, { room, ...opts } = {}) => getRoomManager().start(room, opts));
+  handle('lan:stop', async () => getRoomManager().stop());
+  handle('lan:status', async () => {
     const mgr = getRoomManager();
     if (!mgr.room) return { connected: false, running: false, virtualIp: null, peers: [], reason: '尚未启动联机' };
     return mgr.status();
   });
-  ipcMain.handle('lan:listRooms', async () => {
+  handle('lan:listRooms', async () => {
     const mgr = getRoomManager();
     return mgr.listRooms();
   });
 
   // ==================== 模块三：本地世界（存档）智能管家 ====================
-  ipcMain.handle('world:list', async (evt, { gameDir } = {}) =>
+  handle('world:list', async (evt, { gameDir } = {}) =>
     worldMgr.listWorlds(gameDir || GAME_DIR));
-  ipcMain.handle('world:inspect', async (evt, { worldDir, gameDir } = {}) =>
+  handle('world:inspect', async (evt, { worldDir, gameDir } = {}) =>
     worldMgr.inspectWorld(worldDir, { gameDir: gameDir || GAME_DIR }));
-  ipcMain.handle('world:backups', async (evt, { root, world } = {}) =>
+  handle('world:backups', async (evt, { root, world } = {}) =>
     worldMgr.listBackups(root, world));
-  ipcMain.handle('world:backup', async (evt, { gameDir, world, root, tag, keep } = {}) =>
+  handle('world:backup', async (evt, { gameDir, world, root, tag, keep } = {}) =>
     worldMgr.backupWorld(gameDir || GAME_DIR, world, { root, tag, keep }));
-  ipcMain.handle('world:restore', async (evt, { gameDir, world, zipPath, root } = {}) =>
+  handle('world:restore', async (evt, { gameDir, world, zipPath, root } = {}) =>
     worldMgr.restoreWorld(gameDir || GAME_DIR, world, zipPath, { root }));
 
   // ==================== 模块四：3D 皮肤渲染与外观定制 ====================
-  ipcMain.handle('skin:inspectFile', async (evt, filePath) => skinMgr.loadLocalSkin(filePath));
-  ipcMain.handle('skin:fetchFromAuthlib', async (evt, { apiRoot, playerName } = {}) =>
+  handle('skin:inspectFile', async (evt, filePath) => skinMgr.loadLocalSkin(filePath));
+  handle('skin:fetchFromAuthlib', async (evt, { apiRoot, playerName } = {}) =>
     skinMgr.fetchSkinFromAuthlib(apiRoot, playerName));
-  ipcMain.handle('skin:downloadImage', async (evt, { url } = {}) => skinMgr.downloadSkinImage(url));
-  ipcMain.handle('skin:upload', async (evt, opts = {}) => skinMgr.uploadSkin(opts));
+  handle('skin:downloadImage', async (evt, { url } = {}) => skinMgr.downloadSkinImage(url));
+  handle('skin:upload', async (evt, opts = {}) => skinMgr.uploadSkin(opts));
 
   // ==================== 模块一（0.4.0）：P2P 真实网络配置向导 / 容错诊断 ====================
-  ipcMain.handle('net:guide', async () => netGuide.NETWORK_GUIDE);
-  ipcMain.handle('net:diagnose', async (evt, payload = {}) => {
+  handle('net:guide', async () => netGuide.NETWORK_GUIDE);
+  handle('net:diagnose', async (evt, payload = {}) => {
     const mgr = getRoomManager();
     const status = payload.status || await mgr.status();
     return netGuide.diagnoseHandshake({
@@ -581,13 +626,13 @@ function registerIpc(mainWindow) {
   });
 
   // ==================== 模块二（0.4.0）：模组与资源包智能管家 ====================
-  ipcMain.handle('mods:list', async (evt, o = {}) => {
+  handle('mods:list', async (evt, o = {}) => {
     try {
       const gameDir = resolveGameDir(o);
       return { ok: true, gameDir, ...modsMgr.listMods(gameDir) };
     } catch (e) { return { ok: false, error: e.message }; }
   });
-  ipcMain.handle('mods:conflicts', async (evt, o = {}) => {
+  handle('mods:conflicts', async (evt, o = {}) => {
     try {
       const gameDir = resolveGameDir(o);
       const listed = modsMgr.listMods(gameDir);
@@ -597,17 +642,17 @@ function registerIpc(mainWindow) {
       };
     } catch (e) { return { ok: false, error: e.message }; }
   });
-  ipcMain.handle('mods:toggle', async (evt, o = {}) => {
+  handle('mods:toggle', async (evt, o = {}) => {
     try { return modsMgr.toggleMod(resolveGameDir(o), o.file, o.enabled); }
     catch (e) { return { ok: false, error: e.message }; }
   });
-  ipcMain.handle('mods:packs', async (evt, o = {}) => {
+  handle('mods:packs', async (evt, o = {}) => {
     try {
       const gameDir = resolveGameDir(o);
       return { ok: true, gameDir, ...modsMgr.listPacks(gameDir) };
     } catch (e) { return { ok: false, error: e.message }; }
   });
-  ipcMain.handle('mods:shaderCheck', async (evt, o = {}) => {
+  handle('mods:shaderCheck', async (evt, o = {}) => {
     try {
       const gameDir = resolveGameDir(o);
       return {
@@ -616,7 +661,7 @@ function registerIpc(mainWindow) {
       };
     } catch (e) { return { ok: false, error: e.message }; }
   });
-  ipcMain.handle('mods:pickPack', async () => {
+  handle('mods:pickPack', async () => {
     const r = await dialog.showOpenDialog(mainWindow, {
       title: '选择光影包 / 材质包（.zip）',
       filters: [{ name: '资源包', extensions: ['zip'] }],
@@ -624,7 +669,7 @@ function registerIpc(mainWindow) {
     });
     return r.canceled ? null : r.filePaths[0];
   });
-  ipcMain.handle('mods:import', async (evt, o = {}) => {
+  handle('mods:import', async (evt, o = {}) => {
     try {
       return modsMgr.importPack(resolveGameDir(o), o.kind, o.srcPath, { overwrite: !!o.overwrite });
     } catch (e) { return { ok: false, error: e.message }; }
@@ -632,7 +677,7 @@ function registerIpc(mainWindow) {
 
   // ==================== 模块一（0.5.0）：UI 视觉革命 — 动态背景 / 极客 JVM 面板 ====================
   // 本地背景图片：选文件 → 真实字节校验 → 返回 dataUrl（不落盘、不暴露 file:// 路径）
-  ipcMain.handle('appearance:pickImage', async () => {
+  handle('appearance:pickImage', async () => {
     const r = await dialog.showOpenDialog(mainWindow, {
       title: '选择本地背景图片',
       filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] }],
@@ -647,10 +692,70 @@ function registerIpc(mainWindow) {
     } catch (e) { return { ok: false, error: e.message }; }
   });
   // 校验 / 归一化外观配置（渲染进程保存前调用一次，避免脏配置）
-  ipcMain.handle('appearance:validate', async (evt, cfg) => appearance.validateAppearance(cfg));
+  handle('appearance:validate', async (evt, cfg) => appearance.validateAppearance(cfg));
   // 推荐 JVM 预设列表 + 参数预校验（供设置页「推荐配置」与实时校验）
-  ipcMain.handle('jvm:profiles', async () => appearance.recommendedProfiles());
-  ipcMain.handle('jvm:preview', async (evt, o = {}) => appearance.mergeLaunchJvm(o));
+  handle('jvm:profiles', async () => appearance.recommendedProfiles());
+  handle('jvm:preview', async (evt, o = {}) => appearance.mergeLaunchJvm(o));
+
+  // ============ 0.6.0 模块三：性能小雷达 / 极客一键调优 ============
+  handle('jvm:monitorStatus', async () => jvmMonitor
+    ? jvmMonitor.summary()
+    : { running: false, samples: [], sampleCount: 0, gc: { count: 0, totalPauseMs: 0, maxPauseMs: 0, last: null } });
+  handle('jvm:recommend', async () => jvmMonitorMod.recommendJvm(os.totalmem()));
+
+  // ============ 0.6.0 模块四：Modrinth 在线资源中心 ============
+  handle('modrinth:search', async (evt, q = {}) => modrinth.searchProjects(q));
+  handle('modrinth:versions', async (evt, q = {}) => modrinth.fetchVersions(q));
+  handle('modrinth:install', async (evt, o = {}) => {
+    const gameDir = resolveGameDir(o);
+    return modrinth.installProject({
+      ...o,
+      gameDir,
+      q: { mcVersion: o.mcVersion, loader: o.loader },
+      onProgress: (p) => send('modrinth:progress', p)
+    });
+  });
+
+  // ============ 0.6.0 模块五：自动更新（latest.yml + 后台静默下载） ============
+  handle('update:check', async (evt, o = {}) => updater.checkForUpdate({
+    currentVersion: require('../package.json').version,
+    ...(o || {})
+  }));
+  handle('update:status', async () => ({ downloading: updateState.downloading, last: updateState.last }));
+  handle('update:download', async (evt, o = {}) => {
+    if (updateState.downloading) return { ok: false, error: '已有更新包在后台下载中' };
+    const url = o.url || o.mirrorUrl;
+    if (!url || !/^https?:\/\//.test(url)) return { ok: false, error: '缺少合法的更新包下载地址' };
+    let filename;
+    try { filename = path.basename(new URL(url).pathname); }
+    catch { return { ok: false, error: '下载地址无法解析文件名' }; }
+    const dest = path.join(os.tmpdir(), `MC-Next-update-${filename}`);
+    updateState.downloading = true;
+    updateState.last = null;
+    // 后台执行：IPC 立即返回，进度通过 update:progress 事件推送（静默下载，不打断用户）
+    (async () => {
+      try {
+        send('update:progress', { phase: 'start', dest, name: filename });
+        await downloadFile(url, dest, {
+          preferMirror: false,
+          timeoutMs: 120000,
+          onProgress: (received, total) => send('update:progress', { phase: 'progress', received, total, name: filename })
+        });
+        const verify = o.sha512
+          ? updater.verifySha512(dest, o.sha512)
+          : { ok: false, error: 'latest.yml 未提供 sha512，拒绝标记为可安装' };
+        updateState.last = { ok: verify.ok, path: dest, verify };
+        send('update:progress', { phase: verify.ok ? 'done' : 'verify-failed', path: dest, name: filename, verify });
+      } catch (e) {
+        updateState.last = { ok: false, error: e.message };
+        send('update:progress', { phase: 'error', error: e.message, name: filename });
+      } finally { updateState.downloading = false; }
+    })();
+    return { ok: true, started: true, dest };
+  });
 }
 
-module.exports = { registerIpc, state, launchGameCore, logBuf, pushLog, send };
+module.exports = {
+  registerIpc, state, launchGameCore, logBuf, pushLog, send,
+  dispatchChannel, hasChannel, HANDLERS
+};

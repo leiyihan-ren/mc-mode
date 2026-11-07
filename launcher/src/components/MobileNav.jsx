@@ -5,6 +5,7 @@ const TABS = [
   { id: 'download', icon: '⬇️', label: '下载' },
   { id: 'instances', icon: '📦', label: '实例' },
   { id: 'mods', icon: '🧩', label: '模组' },
+  { id: 'resources', icon: '🧭', label: '资源' },
   { id: 'console', icon: '🖥️', label: '控制台' },
   { id: 'settings', icon: '⚙️', label: '设置' }
 ]

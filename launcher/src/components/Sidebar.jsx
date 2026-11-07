@@ -8,6 +8,7 @@ const NAV = [
   { id: 'modpack', label: '整合包导入', icon: '📥' },
   { id: 'instances', label: '实例 / 导出', icon: '📦' },
   { id: 'mods', label: '模组管家', icon: '🧩' },
+  { id: 'resources', label: '资源中心', icon: '🧭' },
   { id: 'localjar', label: '本地 Jar', icon: '🧬' },
   { id: 'java', label: 'Java 管家', icon: '☕' },
   { id: 'lobby', label: '联机大厅', icon: '🌐' },
