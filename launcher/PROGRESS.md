@@ -137,3 +137,35 @@
 - 模组冲突为静态元数据检测，非游戏内加载结果；Capacitor APK 是 WebView 壳，能跑 MC 的是原生 APK。
 - AI「三国剧情」保持删除（按用户此前要求）；皮肤上传仍需显式 endpoint+token。
 
+---
+
+## 🚀 极致体验 v0.5.0（2026-11-07）：UI 视觉革命 / 整合包一键分发
+
+> 从「功能完备」转向「极致体验」，在 0.4.0 之上平滑扩展，未推翻任何既有链路；既有 229 项测试零回归，全量 **259 / 259 通过**。
+
+### 三大模块
+1. **UI 视觉与交互革命**：`src/components/BackgroundLayer.jsx`（深色极简 / Canvas 粒子+近邻连线 / 本地图片毛玻璃三种模式，适配 devicePixelRatio、尊重 `prefers-reduced-motion`）+ `engine/appearance.cjs`（图片真实魔数校验、12MB 上限、sha256）；`LaunchTransition.jsx` 点击启动后 app shell 缩小淡出（纯视觉，`Promise.all` 让真实 `launchGame` 与动画并行，不阻塞 JVM，失败路径可自然恢复）；「🛠 极客自定义面板」提供 `parseJvmArgs` / `validateJvmArgs`（shell 元字符拦截、注释与引号、剥离 `-Xmx/-Xms`）/ 4 组真实 G1GC 预设 / `mergeLaunchJvm`，并**打通此前未接线的链路** —— `launchGameCore` 现在把 `extraJvmArgs` 真正传给 `GameLauncher`。
+2. **整合包一键封装与分享**：新增 `engine/modpackExport.cjs` + `src/pages/InstancePage.jsx`，导出标准 `.mrpack`（`modrinth.index.json` 依赖由 `instance.json` 真实反解析，本地模组放 `overrides/mods` 自包含、不编造远程直链）+ `mcnext-manifest.json`（每模组真实元数据与 sha256）；排除账号/存档/日志等敏感文件，单文件 96MB / 整包 512MB / 4000 文件护栏。重写 `ModpackPage.jsx`：拖拽导入（分块 base64 → `modpack:parseBuffer`，桌面与 Capacitor WebView 通用）+ 依赖预检标红拦截（真实 jar 元数据 + 官方引导链接 + 后端 `installWithPreflight` 硬拦截，不建实例、不下载、不崩溃）。
+3. **沙盒模拟压测** `tests/modpack-stress.test.cjs`：真实 zip 字节 + 真实 `fabric.mod.json`，50 模组导出→读回→重装闭环、缺失前置 / loader 未声明拦截、不崩溃不半成品、`force` 逃生舱、损坏 jar 边界，共 11 项。
+
+### 修复的真实 bug
+- 拖拽导入 IPC 往返：`overrides[].data` 经 structured clone 退化为 `Uint8Array` / JSON 化 Buffer 对象，`fs.writeFileSync` 抛 `Received an instance of Object` → 新增 `coerceBytes` / `normalizePlan` 统一还原 `Buffer`（不改动 `modpack.cjs`，保护既有测试），并写成回归测试。
+
+### 集成
+- IPC 新增 9 个 channel（共 **84** 个），preload 同步 9 个桥接；注册 InstancePage / ModsPage 导航，Sidebar / MobileNav / TitleBar 更新版本号；`src/index.css` 增背景层与启动动画 keyframes。
+
+### 测试 / 构建 / 交付
+- 全量单测 **259 / 259 通过**（既有 229 + appearance 19 + 压测 11）；stubbed-Electron 84 channel 端到端烟测通过。
+- 渲染层 Vite 70 modules（`index-D1rD66u6.js`）；桌面 `MC-Next-0.5.0.AppImage`(108.1MB) + `.tar.gz`(102.4MB)。
+- Android 原生 `MC-Next-Native-0.5.0.apk`(70.3MB，54 个 `.so`)；Capacitor `MC-Next-Capacitor-0.5.0.apk`(4.2MB，内嵌本轮 bundle，严格校验非旧包)。
+- Release `mc-next-v0.5.0` **5 个产物**；官方 Release 页 HTTP 200、gh-proxy 镜像 Range 核验 **206 / 2048B**（沙箱内 `github.com` 下载直链超时，故默认走镜像，官方直链保留备用）。
+- 源码 259 文件 → `main/launcher/`（commit `402660fc7f09`）；报告 `/workspace/DELIVERY-0.5.0.md`。
+
+### 边界（延续不糊弄原则）
+- 原生 APK 本轮未改原生代码（`assembleDebug` 为 UP-TO-DATE），复用 0.2.0 起真实 JRE17 / GL4ES / JNI 启动链；内嵌本轮新 UI 的是 Capacitor WebView 壳，能独立运行 MC 的是原生 APK。
+- 本地背景图以 dataUrl 存 `localStorage`（≤12MB），不写磁盘、不引入自定义协议。
+- 导出的整合包是自包含 `.mrpack`（`index.files` 为空，离线可还原）；标准 Modrinth 包仍走原有并发下载链路。
+- 依赖预检是**静态元数据检测**，非游戏内加载结果；`force` 逃生舱会明确警示「游戏可能无法启动」。
+- 推荐 JVM 参数为社区通用 G1GC 预设，实际收益因硬件 / 模组规模而异；内存始终由界面托管，自定义文本中的 `-Xmx/-Xms` 会被剥离而非覆盖。
+- 双节点真实 P2P 握手、LittleSkin 上传 API、AI 三国剧情延续此前边界：未伪造成功 / 保持删除。
+
