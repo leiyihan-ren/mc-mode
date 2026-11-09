@@ -97,3 +97,103 @@ test('safeId 拦截路径穿越与非法字符', () => {
   assert.throws(() => iso.safeId(''), /不能为空/);
   assert.equal(iso.safeId('1.20.1-forge'), '1.20.1-forge');
 });
+
+// ==================== 0.9.0 模块一A：激活实例会话 / 一键切换 / 启动链路隔离 ====================
+
+test('getActiveInstance：无记录返回 null，不伪造；损坏文件容错', () => {
+  const root = tmp();
+  assert.equal(iso.getActiveInstance(root), null);
+  fs.writeFileSync(path.join(root, iso.ACTIVE_FILE), '{ broken json');
+  assert.equal(iso.getActiveInstance(root), null, '损坏的激活文件应容错返回 null');
+});
+
+test('switchInstance：真实校验目标存在；不存在时拒绝且保留原激活态', () => {
+  const root = tmp();
+  iso.ensureInstance(root, 'A');
+  iso.ensureInstance(root, 'B');
+  const r1 = iso.switchInstance(root, 'A');
+  assert.equal(r1.ok, true);
+  assert.equal(r1.from, null);
+  assert.equal(r1.to, 'A');
+  assert.equal(r1.gameDir, iso.gameDirOf(root, 'A'));
+  assert.equal(iso.getActiveInstance(root), 'A');
+
+  const r2 = iso.switchInstance(root, 'B');
+  assert.equal(r2.ok, true);
+  assert.equal(r2.from, 'A', '应记录切换来源供 UI 过渡');
+  assert.equal(r2.to, 'B');
+  assert.equal(iso.getActiveInstance(root), 'B');
+
+  const bad = iso.switchInstance(root, '不存在');
+  assert.equal(bad.ok, false);
+  assert.match(bad.error, /不存在/);
+  assert.equal(iso.getActiveInstance(root), 'B', '失败切换不得改坏激活态');
+});
+
+test('switchInstance 原子写入：不留 .tmp，切换即确保隔离目录齐备', () => {
+  const root = tmp();
+  iso.ensureInstance(root, 'X');
+  iso.switchInstance(root, 'X');
+  assert.ok(!fs.existsSync(path.join(root, iso.ACTIVE_FILE + '.tmp')), '原子 rename 后不应残留 .tmp');
+  const gd = iso.gameDirOf(root, 'X');
+  for (const d of ['mods', 'config', 'saves']) assert.ok(fs.existsSync(path.join(gd, d)));
+});
+
+test('多实例完全隔离：1.12.2 与 1.20.1 的 mods/config/saves 两两不同且不嵌套', () => {
+  const root = tmp();
+  iso.ensureInstance(root, 'mc-1.12.2', { gameVersion: '1.12.2' });
+  iso.ensureInstance(root, 'mc-1.20.1', { gameVersion: '1.20.1' });
+  const v = iso.verifyIsolation(root, 'mc-1.12.2', 'mc-1.20.1');
+  assert.equal(v.isolated, true);
+  assert.equal(v.overlaps.length, 0);
+  // 真实写入互不干扰
+  fs.writeFileSync(path.join(v.pathA.mods, 'jei-1.12.jar'), 'OLD');
+  fs.writeFileSync(path.join(v.pathA.config, 'forge.cfg'), 'A');
+  fs.mkdirSync(path.join(v.pathA.saves, '老存档'));
+  assert.equal(fs.readdirSync(v.pathB.mods).length, 0, '1.20.1 的 mods 不得出现 1.12.2 的模组');
+  assert.equal(fs.readdirSync(v.pathB.saves).length, 0, '存档必须隔离');
+  assert.equal(fs.readdirSync(v.pathB.config).length, 0, '配置必须隔离');
+  assert.notEqual(v.pathA.mods, v.pathB.mods);
+});
+
+test('gameDirForLaunch 优先级：显式 gameDir > instanceId > 激活实例 > 默认', () => {
+  const root = tmp();
+  iso.ensureInstance(root, 'explicit');
+  iso.ensureInstance(root, 'active');
+  const def = path.join(root, 'game');
+
+  const s0 = iso.gameDirForLaunch(root, {}, def);
+  assert.equal(s0.gameDir, def);
+  assert.equal(s0.isolated, false);
+  assert.equal(s0.instanceId, null);
+
+  iso.switchInstance(root, 'active');
+  const s1 = iso.gameDirForLaunch(root, {}, def);
+  assert.equal(s1.instanceId, 'active', '无显式参数时回落当前激活实例');
+  assert.equal(s1.isolated, true);
+
+  const s2 = iso.gameDirForLaunch(root, { instanceId: 'explicit' }, def);
+  assert.equal(s2.instanceId, 'explicit', '显式 instanceId 覆盖激活实例');
+  assert.equal(s2.gameDir, iso.gameDirOf(root, 'explicit'));
+
+  const custom = path.join(root, 'custom-absolute');
+  const s3 = iso.gameDirForLaunch(root, { gameDir: custom, instanceId: 'explicit' }, def);
+  assert.equal(s3.gameDir, custom, '显式绝对路径优先级最高');
+  assert.equal(s3.isolated, false);
+});
+
+test('gameDirForLaunch 命中实例时自动 ensureInstance（物理目录真实存在）', () => {
+  const root = tmp();
+  // 不预先 ensureInstance，直接解析：应自动创建隔离目录
+  const s = iso.gameDirForLaunch(root, { instanceId: 'fresh' }, path.join(root, 'game'));
+  assert.equal(s.isolated, true);
+  assert.ok(fs.existsSync(path.join(s.gameDir, 'mods')));
+  assert.ok(fs.existsSync(path.join(s.gameDir, 'config')));
+  assert.ok(fs.existsSync(path.join(s.gameDir, 'saves')));
+  assert.ok(fs.existsSync(iso.instanceRoot(root, 'fresh') + '/instance.json'));
+});
+
+test('gameDirForLaunch 相对路径显式 gameDir 必须被拒绝', () => {
+  const root = tmp();
+  assert.throws(() => iso.gameDirForLaunch(root, { gameDir: '../escape' }), /绝对路径/);
+});

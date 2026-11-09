@@ -215,3 +215,88 @@
 - 性能小雷达 RSS 依赖 Linux `/proc`，其他平台明确显示不可用；GC 曲线来自真实日志样本，无数据时不画模拟曲线。
 - Android 热更新仅检查提示，系统不允许静默安装 APK；桌面静默下载只到临时目录，校验通过也不自动替换安装。
 
+
+---
+
+## 🛡️ 稳定性与工程化 v0.7.0（2026-11-08）：纯重构 / 性能 / 双端适配（无新增功能）
+
+> 定位：内部重构里程碑。按用户要求「严禁添加新功能」，只做规范、提速、底层适配、稳定性守护。
+> 最终双端产物与 Release 统一在 v0.9.0 终局发布（避免同一快照重复发版）。
+> 本地断点：`f7f3a41`(M1) → `c89f4a6`(M2) → `53faddd`(M3) → `e7a5684`(M4) → 模块五收尾提交。
+> 全量 **387 / 387 通过**（v0.6.0 的 328 项零回归，新增 59 项 Node 断言）；Android Gradle 单测 **59 / 59**。
+
+### 模块一：工程化规范与目录结构 Feature 化
+- `src/features/`（launcher / mods / settings / account / world / server / crash / shell）重组 25 个文件；`src/services/bridge.js` 为唯一 `window.mcnext` 门面，由契约白名单自动生成同构 api。
+- Vite 加 `@` 别名 + 生产构建 `drop: ['console']`（含第三方 skinview3d），产物零 `console.*`；`tests/architecture.test.cjs` 架构守卫防回退。
+
+### 模块二：PC 端深度适配与提速
+- `engine/preflight.cjs` 启动前体检：Java 版本自动接管、内存防崩（-Xmx 超物理内存或 <1024MB 拦截）、中文/空格路径自检；刻意排在补齐依赖之前，环境有问题零网络请求、瞬间失败。
+- `engine/jvmArgs.js` `extractNatives` 全程 Node fs（不经 shell）支持中文/空格路径 + Zip-Slip 防护（`..` / 绝对路径 / META-INF 剔除）。
+
+### 模块三：安卓端底层适配与渲染优化
+- `GpuProbe` 真实 GPU 探测；`RenderBackend` GL4ES/VirGL/Zink/ANGLE 自动降级链 + 手动指定；`ArgBuilder` 移动端 GC 调度（降 GC 线程、关 UsePerfData、尊重用户自选 GC）；`InputBridge.releaseAllHeld()` + Activity 生命周期全局释放虚拟按键。
+
+### 模块四：高可靠稳定性守护
+- `engine/crash/guardian.cjs` 桌面实时 stderr 拦截（复用 analyzer.RULES 单一规则源 + JVM 原生 hs_err/SIGSEGV/JNI 特征），STRONG 立即接管、上下文型防误杀、去重、异常退出兜底 UNKNOWN_EXIT。
+- `engine/crash/reaper.cjs` 进程组回收：spawn `detached` → `process.kill(-pid)` 整组清理，Windows `taskkill /T`；`before-quit` 兜底，杜绝僵尸 Java 进程。
+- 修复**真实 bug**：spawn 失败(ENOENT) 只发 `error` 不 emit `exit`，UI 永久卡「启动中」→ 统一 `finishOnce` 去重并补发 exit。
+- `AndroidCrashGuard.java` 安卓同源守护（synchronized 并发安全）；双端 `game:crash` → 全局 `CrashDialog` 人类可读弹窗，崩溃强制复位 gameRunning。
+
+### 模块五：终极交付与边界
+- 全量 387/387、Gradle 59/59、渲染层构建（81 模块）、大一统 APK 重编 `BUILD SUCCESSFUL`（本轮 bundle `index-D7RRAM91.js` + JRE + JNI 桥产物级校验全 OK）均已实测通过。
+- 修复构建链路真实缺陷：debug 构建剥离上次 release 残留的 `signingConfigs`（`file(null)` 崩溃），两条构建链路彻底隔离。
+
+### 边界（延续不糊弄原则）
+- 真实浏览器 OAuth2 / Mojang profile / Modrinth 下载 / 双节点 P2P 握手受沙盒限制，沿用协议级 Mock（明确标注「演示」、与真实账号隔离），不伪造成功。
+- JVM 崩溃特征来自真实 stdout/stderr 环形缓冲；沙盒无法真实触发 Segfault，故以协议级日志注入 + 单元测试验证拦截链路，不谎称经历过真机 native crash。
+- 进程树回收在 Linux 沙盒用真实 `process.kill(-pid)` / 可注入 kill 单测验证；Windows `taskkill /T` 路径为可注入 execFile 的逻辑验证（沙盒非 Windows）。
+- 桌面签名 / Apple 公证 / Play 上架签名的边界延续 v0.6.0 声明，不产出声称已签名的 .exe / .dmg。
+
+
+---
+
+## 🚀 终局 v0.9.0（2026-11-09）：双端高阶功能集成与底层架构加固 + 通宵收尾发布
+
+> 定位：把 v0.7.0（纯重构）之后的所有能力一次性收敛为**最终双端产物 + Release**。
+> 六大功能模块 M1A～M2C 见前述 commit `9a4747d`→`06e0a24`；本段记录 429 断点后的终局集成
+> （Step A 参数化 → 通宵加固 → 发布）。全量 **526 / 526**、Gradle **67 / 67**、E2E **5 / 5**。
+
+### 429 断点续跑：发布脚本全参数化（Step A）
+- `package.json` bump `0.9.0`；`config/release.json` tag/资产名收敛；`config/release-body.md` 正文外置。
+- `upload-release.py` / `publish-source.py` / `gen-latest-yml.cjs` / `build-unified-apk.sh` / 安卓 Updater UA
+  全部改为读 `package.json` + `release.json` 单一数据源，消除跨版本硬编码；发布前缺任一资产即拒绝发布。
+
+### 通宵加固·模块一：修复桌面端 IPC 订阅真实内存泄漏（假绿修复）
+- 发现 `preload.cjs` 17 个 `on*` 返回 `ipcRenderer.on()` 的 this（object 而非 off 函数），
+  `wrapSubscription` 永不触发 `removeListener`，仪表显示归零但底层监听器单调累积。
+- 局部包装 `ipcRenderer.on` 让每个 `on*` 返回幂等 off（精确移除同一 handler）；方法字面量零改动
+  → 契约 102/17 三端产物零漂移；`tests/ipc-listener-leak.test.cjs` 真实 EventEmitter 验证 2000 轮归零。
+- 审查 Electron / Capacitor 双端隔离（contextIsolation / 白名单 / native-remote 分类）与
+  GL4ES/VirGL/Zink 降级链，补 10 项专项测试。
+
+### 通宵加固·模块二：极限测试 + asar 瘦身 -94%
+- 全量 526/526、E2E 5/5（E2E-1 改用 Mojang 官方清单 → piston-meta真实源多源降级，不伪造）、
+  Gradle 67/67、渲染层 83 modules。
+- asar 审查：`three`/`skinview3d`/`@capacitor/core`/`axios` 仅构建期需要或零引用，移 devDependencies，
+  生产依赖仅留 `adm-zip`。**app.asar 23.8MB → 1.44MB (-94%)**，瘦身产物冒烟加载通过。
+  `tests/asarSlim.test.cjs` 防回退。
+- 打包：Linux AppImage/tar.gz 真实产出；Windows 交叉构建经 npmmirror 镜像绕过网络阻断，
+  `portable` target 产出未签名 `MC-Next-Setup-0.9.0.exe`；**NSIS 安装包受 wine 限制、Authenticode
+  签名受证书限制**，如实记录为边界，不伪造签名（详见战报）。
+
+### 通宵加固·模块三：AI 可读崩溃摘要 + 文档
+- `engine/crash/aiDigest.cjs`：聚合 analyzer/guardian/logCleaner/ipcGuard 四路输出为脱敏、有界、
+  结构化 Markdown + JSON，补 hs_err/JNI 原生帧解析；`tests/aiCrashDigest.test.cjs` 13 项。
+- 核心崩溃/JVM 模块补 JSDoc `@typedef`；`docs/ARCHITECTURE.md` 模块解耦说明；Release Notes 草稿。
+
+### 终局产物与发布
+- 桌面 `MC-Next-0.9.0.AppImage` / `.tar.gz`、安卓正式签名 `MC-Next-Unified-0.9.0.apk`
+  （v2 验签 RSA 2048，产物级校验 + 瘦身审计 0 残留）、`mc-next-source-0.9.0.tar.gz`、
+  `latest.yml`（真实 sha512/size）。Release `mc-next-v0.9.0` make_latest=true；源码推 `main/launcher/`。
+- 交付：`/workspace/DELIVERY-0.9.0.md`、`/workspace/MC-Next·通宵开发战报.md`、`/workspace/待办决策.md`。
+
+### 边界（延续不糊弄原则）
+- 沙盒无 Windows Authenticode / Apple Developer ID 证书、无 wine → NSIS 安装包与真签名 `.exe`/`.dmg`
+  不产出；`tools/build-signed-desktop.sh` 固化持证构建机可复现链路。Android 为真实自签名证书（v2 验签通过），非 Play 上架签名。
+- 沙盒无真机：JNI 真 Segfault、`.so` 解压加载、24h 真实 heap 曲线、真实浏览器 OAuth2 /
+  Modrinth 下载 / P2P 握手，均以协议级 Mock + 结构不变量高频等价验证替代，不谎称经历真机场景。

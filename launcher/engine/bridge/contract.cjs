@@ -1,7 +1,7 @@
 'use strict';
 /**
  * 由 tools/gen-bridge-contract.cjs 自动生成，请勿手工修改。
- * 数据源：electron/preload.cjs（97 个 invoke 方法 / 15 个事件方法）
+ * 数据源：electron/preload.cjs（102 个 invoke 方法 / 17 个事件方法）
  */
 const INVOKE_CHANNELS = Object.freeze([
   "repo:listClients",
@@ -10,6 +10,8 @@ const INVOKE_CHANNELS = Object.freeze([
   "manifest:fetch",
   "version:getJson",
   "download:start",
+  "download:benchmark",
+  "download:smart",
   "game:launch",
   "game:stop",
   "game:status",
@@ -27,6 +29,9 @@ const INVOKE_CHANNELS = Object.freeze([
   "instance:info",
   "instance:args",
   "instance:remove",
+  "instance:active",
+  "instance:switch",
+  "instance:verify",
   "auth:list",
   "auth:deviceStart",
   "auth:deviceBegin",
@@ -108,8 +113,10 @@ const EVENT_CHANNELS = Object.freeze([
   "download:error",
   "game:log",
   "game:exit",
+  "game:crash",
   "server:log",
   "server:exit",
+  "instance:changed",
   "auth:deviceStatus",
   "download:batch",
   "modpack:progress",
@@ -126,6 +133,8 @@ const METHOD_MAP = Object.freeze({
   "fetchManifest": "manifest:fetch",
   "getVersionJson": "version:getJson",
   "startDownload": "download:start",
+  "benchmarkDownload": "download:benchmark",
+  "smartDownload": "download:smart",
   "launchGame": "game:launch",
   "stopGame": "game:stop",
   "gameStatus": "game:status",
@@ -143,6 +152,9 @@ const METHOD_MAP = Object.freeze({
   "instanceInfo": "instance:info",
   "instanceArgs": "instance:args",
   "instanceRemove": "instance:remove",
+  "instanceActive": "instance:active",
+  "instanceSwitch": "instance:switch",
+  "instanceVerify": "instance:verify",
   "authList": "auth:list",
   "authDeviceStart": "auth:deviceStart",
   "authDeviceBegin": "auth:deviceBegin",
@@ -224,8 +236,10 @@ const EVENT_METHOD_MAP = Object.freeze({
   "onDownloadError": "download:error",
   "onGameLog": "game:log",
   "onGameExit": "game:exit",
+  "onGameCrash": "game:crash",
   "onServerLog": "server:log",
   "onServerExit": "server:exit",
+  "onInstanceChanged": "instance:changed",
   "onAuthDevice": "auth:deviceStatus",
   "onDownloadBatch": "download:batch",
   "onModpackProgress": "modpack:progress",
@@ -249,7 +263,8 @@ const NATIVE_CHANNELS = Object.freeze([
 ]);
 const NATIVE_EVENTS = Object.freeze([
   "game:log",
-  "game:exit"
+  "game:exit",
+  "game:crash"
 ]);
 const METHOD_ARITY = Object.freeze({
   "listClients": 0,
@@ -258,6 +273,8 @@ const METHOD_ARITY = Object.freeze({
   "fetchManifest": 0,
   "getVersionJson": 1,
   "startDownload": 1,
+  "benchmarkDownload": 1,
+  "smartDownload": 1,
   "launchGame": 1,
   "stopGame": 0,
   "gameStatus": 0,
@@ -275,6 +292,9 @@ const METHOD_ARITY = Object.freeze({
   "instanceInfo": 1,
   "instanceArgs": 2,
   "instanceRemove": 1,
+  "instanceActive": 0,
+  "instanceSwitch": 1,
+  "instanceVerify": 1,
   "authList": 0,
   "authDeviceStart": 1,
   "authDeviceBegin": 1,

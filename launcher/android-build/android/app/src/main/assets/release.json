@@ -1,13 +1,14 @@
 {
   "repo": "https://github.com/leiyihan-ren/mc-mode",
-  "tag": "mc-next-v0.6.0",
+  "tag": "mc-next-v0.9.0",
+  "title": "双端高阶功能集成与底层架构加固",
   "mirror": "https://gh-proxy.com/",
   "assets": {
-    "appImage": "MC-Next-0.6.0.AppImage",
-    "tarGz": "MC-Next-0.6.0.tar.gz",
-    "apk": "MC-Next-Unified-0.6.0.apk",
-    "capacitorApk": "MC-Next-Unified-0.6.0.apk",
-    "source": "mc-next-source-0.6.0.tar.gz",
+    "appImage": "MC-Next-0.9.0.AppImage",
+    "tarGz": "MC-Next-0.9.0.tar.gz",
+    "apk": "MC-Next-Unified-0.9.0.apk",
+    "capacitorApk": "MC-Next-Unified-0.9.0.apk",
+    "source": "mc-next-source-0.9.0.tar.gz",
     "latestYml": "latest.yml"
   }
 }

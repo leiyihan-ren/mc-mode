@@ -9,6 +9,10 @@ android {
             keyPassword System.getenv("MCNEXT_KEYSTORE_PASSWORD")
         }
     }
+    // [mcnext-legacy-packaging] 0.9.0 M2B 实验：压缩 .so 降低 APK 体积
+    packagingOptions {
+        jniLibs { useLegacyPackaging = true }
+    }
     externalNativeBuild {
         cmake { path "src/main/jni/CMakeLists.txt" }
     }
@@ -19,8 +23,8 @@ android {
         applicationId "com.mcnext.launcher"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 600
-        versionName "0.6.0"
+        versionCode 900
+        versionName "0.9.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.

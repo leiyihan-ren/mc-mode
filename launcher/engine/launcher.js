@@ -11,6 +11,7 @@ const os = require('os');
 const EventEmitter = require('events');
 const { buildJvmArgs, extractNatives } = require('./jvmArgs');
 const { defaultEnv } = require('./library');
+const { spawnOptions, killTree } = require('./crash/reaper.cjs');
 
 /** ANSI 颜色剥离（日志存储/搜索用） */
 function stripAnsi(s) {
@@ -77,15 +78,18 @@ class GameLauncher extends EventEmitter {
     const args = [...jvmArgs, o.versionJson.mainClass, ...gameArgs];
     this.emit('log', { level: 'info', text: `[MC-Next] 启动: ${javaPath} ${args.slice(0, 6).join(' ')} ...` });
 
-    const child = spawn(javaPath, args, {
+    // 0.7.0 模块四：detached=true 让 JVM 成为独立进程组 leader，
+    // 退出/异常时 killTree 可用 process.kill(-pid) 一次回收 Java 及其所有子进程。
+    const child = spawn(javaPath, args, spawnOptions({
       cwd: o.gameDir,
       env: { ...process.env, ...(o.envVars || {}) },
       stdio: ['pipe', 'pipe', 'pipe']
-    });
+    }));
     this.process = child;
     this.running = true;
     this.startTime = Date.now();
 
+    // 携带 stream 来源：崩溃守护器对 stderr 的致命特征更敏感（JVM 错误全在 stderr）。
     const onData = (stream) => (buf) => {
       const text = buf.toString('utf8');
       this._pushRaw(text);
@@ -93,27 +97,35 @@ class GameLauncher extends EventEmitter {
       const lines = text.split(/\r?\n/);
       for (const line of lines) {
         if (line.length === 0) continue;
-        this.emit('log', { level: classifyLine(line), text: stripAnsi(line) });
+        this.emit('log', { level: classifyLine(line), text: stripAnsi(line), stream });
       }
     };
     child.stdout.on('data', onData('stdout'));
     child.stderr.on('data', onData('stderr'));
 
-    child.on('error', (err) => {
-      this.running = false;
-      this.emit('error', err);
-      this.emit('log', { level: 'error', text: `[MC-Next] 进程错误: ${err.message}` });
-    });
-
-    child.on('exit', (code, signal) => {
+    // 只发一次退出：spawn 失败(ENOENT) 时 Node 只发 error + close，不发 exit；
+    // 正常退出时 exit 与 close 都会到。用 finished 去重，保证 UI 必然离开「启动中」。
+    let finished = false;
+    const finishOnce = (code, signal, extra = {}) => {
+      if (finished) return;
+      finished = true;
       this.running = false;
       const dur = ((Date.now() - this.startTime) / 1000).toFixed(1);
-      this.emit('log', { level: 'info', text: `[MC-Next] 进程退出 code=${code} signal=${signal} 运行 ${dur}s` });
-      this.emit('exit', { code, signal, duration: dur });
+      this.emit('log', { level: 'info', text: `[MC-Next] 进程退出 code=${code} signal=${signal} 运行 ${dur}s`, stream: 'stdout' });
+      this.emit('exit', { code, signal, duration: dur, ...extra });
+    };
+
+    child.on('error', (err) => {
+      this.emit('log', { level: 'error', text: `[MC-Next] 进程错误: ${err.message}`, stream: 'stderr' });
+      // 关键修复：补发 exit，否则 spawn 失败时前端永远停在「启动中」。
+      finishOnce(-1, null, { error: err.message, spawnFailed: true });
+      if (this.listenerCount('error') > 0) this.emit('error', err);
     });
+    child.on('exit', (code, signal) => finishOnce(code, signal));
+    child.on('close', (code, signal) => finishOnce(code, signal));
 
     // stdin 支持（服务端命令注入）
-    child.stdin.on('error', () => {});
+    if (child.stdin) child.stdin.on('error', () => {});
     return child;
   }
 
@@ -133,14 +145,15 @@ class GameLauncher extends EventEmitter {
     return false;
   }
 
-  /** 终止进程（先温和 TERM，超时强杀） */
+  /** 终止整棵进程树（先 TERM，超时 SIGKILL 强杀整组，避免残留 Java 子进程） */
   async kill(graceMs = 8000) {
     if (!this.process || !this.running) return;
     const child = this.process;
+    this.intentionalStop = true; // 用户主动停止 → 守护器不产生崩溃弹窗
     const exited = new Promise(resolve => child.once('exit', resolve));
-    child.kill('SIGTERM');
+    killTree({ child, pid: child.pid, signal: 'SIGTERM' });
     const timer = setTimeout(() => {
-      try { child.kill('SIGKILL'); } catch {}
+      try { killTree({ child, pid: child.pid, signal: 'SIGKILL', force: true }); } catch {}
     }, graceMs);
     if (timer.unref) timer.unref();
     await exited;

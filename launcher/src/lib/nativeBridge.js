@@ -3,18 +3,20 @@
  *
  * 桌面端由 electron/preload.cjs 的 contextBridge 注入 API；
  * 安卓端没有 Electron，本模块在 Capacitor WebView 里注入**同构**的 API：
- *   - 所有 84 个 invoke 方法 → McNextBridge.invoke({channel,args,pc})
- *   - 所有 11 个事件方法   → McNextBridge 的 notifyListeners
+ *   - 所有 invoke 方法 → McNextBridge.invoke({channel,argsJson,pc})
+ *   - 所有事件方法   → McNextBridge 的 notifyListeners
  * channel 映射来自 src/lib/bridge-contract.json（由 preload.cjs 自动生成，单一数据源）。
  *
  * 落点（严格，不伪造结果）：
  *   native  → Java NativeCommandRouter → JNI / JvmBridge / GL4ES
  *   remote  → Java HttpURLConnection → PC 端 /api/rpc → 桌面真实 IPC handler
- *   remote 事件（非 game:log / game:exit）→ 明确告警并返回空订阅，绝不伪造数据
+ *   remote 事件（非 game:log / game:exit）→ 通过可注入回调明确告知，绝不伪造数据
+ *
+ * 0.7.0 模块一：移除散落的 console.warn，改为 onUnsupportedEvent 回调，控制台零噪声。
  */
 import { Capacitor, registerPlugin } from '@capacitor/core'
-import contract from './bridge-contract.json'
-import { getPC } from './remote.js'
+import contract from '@/lib/bridge-contract.json'
+import { getPC } from '@/lib/remote.js'
 
 export const NATIVE_BRIDGE_FLAG = '__MCNEXT_NATIVE__'
 
@@ -26,11 +28,16 @@ export function shouldInstallNativeBridge() {
 }
 
 /**
- * 纯函数式核心：便于在 Node 单测里注入假 Bridge，验证 84 条指令的派发逻辑。
- * @param {object} deps { bridge, getPc, contractData }
+ * 纯函数式核心：便于在 Node 单测里注入假 Bridge，验证全部指令的派发逻辑。
+ * @param {object} deps { bridge, getPc, contractData, onUnsupportedEvent }
  */
 export function createNativeApi(deps) {
-  const { bridge, getPc = () => '', contractData = contract } = deps
+  const {
+    bridge,
+    getPc = () => '',
+    contractData = contract,
+    onUnsupportedEvent = () => {}
+  } = deps
   const nativeSet = new Set(contractData.native)
   const nativeEvents = new Set(contractData.nativeEvents)
 
@@ -68,8 +75,8 @@ export function createNativeApi(deps) {
   for (const [method, channel] of Object.entries(contractData.eventMethodMap)) {
     api[method] = (cb) => {
       if (!nativeEvents.has(channel)) {
-        // 不伪造：远程事件需要 PC 端事件总线，当前只做明确告知
-        console.warn(`[MC-Next] 事件 ${channel} 在 Android 端需 PC 远程事件通道，已跳过订阅（不伪造数据）`)
+        // 不伪造：远程事件需要 PC 端事件总线，当前只做明确告知（由调用方决定如何呈现）
+        onUnsupportedEvent(channel)
         return () => {}
       }
       let handle = null

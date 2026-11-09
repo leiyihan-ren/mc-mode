@@ -148,7 +148,84 @@ function removeInstance(root, id, opts = {}) {
   return true;
 }
 
+// ==================== 0.9.0 模块一A：激活实例会话（多实例完全隔离 + 一键切换） ====================
+
+const ACTIVE_FILE = 'active-instance.json';
+
+/** 读取当前激活实例 id；无记录 / 文件损坏时返回 null（不伪造） */
+function getActiveInstance(root) {
+  const f = path.join(root, ACTIVE_FILE);
+  try {
+    const o = JSON.parse(fs.readFileSync(f, 'utf8'));
+    return o && o.id ? safeId(o.id) : null;
+  } catch { return null; }
+}
+
+/**
+ * 原子切换到目标实例。返回 { ok, from, to, gameDir, error }。
+ * 真实校验：目标实例必须已存在（instance.json），否则拒绝，绝不切到空目录。
+ * 写入用「临时文件 + rename」保证原子性，避免切换过程中读到半截 JSON。
+ */
+function switchInstance(root, id, opts = {}) {
+  const target = safeId(id);
+  const from = getActiveInstance(root);
+  const metaFile = path.join(instanceRoot(root, target), 'instance.json');
+  if (!fs.existsSync(metaFile)) {
+    return { ok: false, from, to: target, gameDir: null, error: `实例 ${target} 不存在，无法切换` };
+  }
+  // 切换即确保目标实例的隔离目录齐备（幂等），保证 mods/saves/config 物理存在
+  const { gameDir } = ensureInstance(root, target);
+  const f = path.join(root, ACTIVE_FILE);
+  fs.mkdirSync(root, { recursive: true });
+  const tmp = f + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify({ id: target, switchedAt: opts.now ? opts.now() : new Date().toISOString() }, null, 2));
+  fs.renameSync(tmp, f);
+  return { ok: true, from, to: target, gameDir, error: null };
+}
+
+/**
+ * 启动用 gameDir 解析（单一数据源，供 ipc.launchGameCore 与远程控制共用）：
+ *   显式 gameDir > 显式 instanceId > 当前激活实例 > 默认主目录。
+ * 带 instanceId / 激活实例时自动 ensureInstance，确保物理隔离目录真实存在。
+ * @returns {{gameDir:string, instanceId:string|null, isolated:boolean}}
+ */
+function gameDirForLaunch(root, o = {}, defaultGameDir = null) {
+  if (o.gameDir) {
+    // 先校验原始输入：path.resolve(relative) 恒为绝对路径，resolve 后再判 isAbsolute 是无效检查。
+    if (!path.isAbsolute(o.gameDir)) throw new Error('gameDir 必须是绝对路径');
+    const p = path.resolve(o.gameDir);
+    return { gameDir: p, instanceId: null, isolated: false };
+  }
+  const id = o.instanceId ? safeId(o.instanceId) : getActiveInstance(root);
+  if (id) {
+    const { gameDir } = ensureInstance(root, id);
+    return { gameDir, instanceId: id, isolated: true };
+  }
+  return { gameDir: defaultGameDir || path.join(root, 'game'), instanceId: null, isolated: false };
+}
+
+/**
+ * 物理隔离校验：两个不同实例的 gameDir 必须互不包含、且 mods/config/saves 路径两两不同。
+ * 供 TDD 与切换前的可读性自检；不修改任何文件。
+ */
+function verifyIsolation(root, idA, idB) {
+  const a = gameDirOf(root, safeId(idA));
+  const b = gameDirOf(root, safeId(idB));
+  const pathOf = (gd, d) => path.join(gd, d);
+  const dirs = ['mods', 'config', 'saves'];
+  const overlaps = dirs.filter(d => pathOf(a, d) === pathOf(b, d) ||
+    pathOf(a, d).startsWith(b + path.sep) || pathOf(b, d).startsWith(a + path.sep));
+  return {
+    isolated: a !== b && overlaps.length === 0,
+    gameDirA: a, gameDirB: b, overlaps,
+    pathA: Object.fromEntries(dirs.map(d => [d, pathOf(a, d)])),
+    pathB: Object.fromEntries(dirs.map(d => [d, pathOf(b, d)]))
+  };
+}
+
 module.exports = {
   ISOLATED_DIRS, SHARED_DIRS, safeId, instanceRoot, gameDirOf,
-  ensureInstance, buildInstanceArgs, listInstances, instanceInfo, migrateLegacy, removeInstance
+  ensureInstance, buildInstanceArgs, listInstances, instanceInfo, migrateLegacy, removeInstance,
+  // 0.9.0 模块一A
+  ACTIVE_FILE, getActiveInstance, switchInstance, gameDirForLaunch, verifyIsolation
 };

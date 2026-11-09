@@ -13,11 +13,18 @@ import base64
 import json
 import os
 import sys
+import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-REPO = os.environ.get("MCNEXT_REPO", "leiyihan-ren/mc-mode")
+PKG = json.loads((ROOT / "package.json").read_text())
+CFG = json.loads((ROOT / "config/release.json").read_text())
+# 0.9.0：仓库 / 版本 / 标题全部来自配置，消除跨版本硬编码（单一数据源）。
+REPO = os.environ.get("MCNEXT_REPO") or CFG["repo"].split("github.com/")[-1].strip("/")
+VERSION = PKG["version"]
+TITLE = CFG.get("title", "版本发布")
 PREFIX = "launcher/"
 TOKEN = os.environ.get("GITHUB_TOKEN") or Path("/tmp/gh_token").read_text().strip()
 API = "https://api.github.com"
@@ -32,16 +39,41 @@ EXCLUDE_SUFFIX = {".jar", ".apk", ".zip", ".xz", ".so", ".AppImage", ".gz", ".lo
 MAX_BYTES = 2 * 1024 * 1024
 
 
+# 0.9.0：409 个 blob 逐个 POST 时，GitHub 可能瞬时断连 / 限流（尤其与 Release 大文件
+# 上传并发时）。对「连接类瞬时错误 + 5xx + 429」做指数退避重试，绝不中断整批推送。
+RETRY_MAX = int(os.environ.get("MCNEXT_API_RETRIES", "5"))
+RETRYABLE_HTTP = {429, 500, 502, 503, 504}
+
+
 def api(path, method="GET", payload=None):
     data = json.dumps(payload).encode() if payload is not None else None
-    req = urllib.request.Request(API + path, data=data, method=method, headers={
-        "Authorization": f"Bearer {TOKEN}",
-        "Accept": "application/vnd.github+json",
-        "User-Agent": "mc-next-publisher/0.2",
-        "Content-Type": "application/json"
-    })
-    with urllib.request.urlopen(req, timeout=120) as r:
-        return json.loads(r.read().decode() or "{}")
+    last = None
+    for attempt in range(RETRY_MAX + 1):
+        req = urllib.request.Request(API + path, data=data, method=method, headers={
+            "Authorization": f"Bearer {TOKEN}",
+            "Accept": "application/vnd.github+json",
+            "User-Agent": f"mc-next-publisher/{VERSION}",
+            "Content-Type": "application/json"
+        })
+        try:
+            with urllib.request.urlopen(req, timeout=120) as r:
+                return json.loads(r.read().decode() or "{}")
+        except urllib.error.HTTPError as e:
+            last = e
+            if e.code not in RETRYABLE_HTTP or attempt >= RETRY_MAX:
+                raise
+            wait = min(2 ** attempt, 16)
+            print(f"  [retry] HTTP {e.code} {method} {path} → {wait}s 后重试({attempt + 1}/{RETRY_MAX})", flush=True)
+            time.sleep(wait)
+        except (urllib.error.URLError, ConnectionError, OSError) as e:
+            # RemoteDisconnected 是 URLError/OSError 子类；blob POST 可安全重试（幂等创建）
+            last = e
+            if attempt >= RETRY_MAX:
+                raise
+            wait = min(2 ** attempt, 16)
+            print(f"  [retry] 连接中断 {type(e).__name__} → {wait}s 后重试({attempt + 1}/{RETRY_MAX})", flush=True)
+            time.sleep(wait)
+    raise last  # pragma: no cover
 
 
 def should_skip(rel):
@@ -90,7 +122,7 @@ def main():
 
     tree = api(f"/repos/{REPO}/git/trees", "POST", {"base_tree": base_tree, "tree": entries})
     commit = api(f"/repos/{REPO}/git/commits", "POST", {
-        "message": "feat: MC-Next 0.6.0 商业级（两端 UI 大一统 / 微软 OAuth2 / JVM 雷达 / Modrinth / 自动更新 / 正式签名 APK）",
+        "message": f"feat: MC-Next v{VERSION} — {TITLE}",
         "tree": tree["sha"], "parents": [ref]
     })
     api(f"/repos/{REPO}/git/refs/heads/main", "PATCH", {"sha": commit["sha"]})

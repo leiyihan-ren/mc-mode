@@ -1,29 +1,39 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import Sidebar from './components/Sidebar.jsx'
-import TitleBar from './components/TitleBar.jsx'
-import HomePage from './pages/HomePage.jsx'
-import DownloadPage from './pages/DownloadPage.jsx'
-import ConsolePage from './pages/ConsolePage.jsx'
-import ServerPage from './pages/ServerPage.jsx'
-import SettingsPage from './pages/SettingsPage.jsx'
-import AccountPage from './pages/AccountPage.jsx'
-import ModpackPage from './pages/ModpackPage.jsx'
-import LocalJarPage from './pages/LocalJarPage.jsx'
-import CrashPage from './pages/CrashPage.jsx'
-import JavaManagerPage from './pages/JavaManagerPage.jsx'
-import LobbyPage from './pages/LobbyPage.jsx'
-import WorldManagerPage from './pages/WorldManagerPage.jsx'
-import SkinPage from './pages/SkinPage.jsx'
-import ModsPage from './pages/ModsPage.jsx'
-import InstancePage from './pages/InstancePage.jsx'
-import ResourceCenterPage from './pages/ResourceCenterPage.jsx'
-import MobileNav from './components/MobileNav.jsx'
-import BackgroundLayer from './components/BackgroundLayer.jsx'
-import LaunchTransition from './components/LaunchTransition.jsx'
-import UpdateBanner from './components/UpdateBanner.jsx'
-import { isMobile } from './lib/remote.js'
-
+import Sidebar from '@/features/shell/components/Sidebar.jsx'
+import TitleBar from '@/features/shell/components/TitleBar.jsx'
+import HomePage from '@/features/launcher/HomePage.jsx'
+import DownloadPage from '@/features/launcher/DownloadPage.jsx'
+import ConsolePage from '@/features/launcher/ConsolePage.jsx'
+import ServerPage from '@/features/server/ServerPage.jsx'
+import SettingsPage from '@/features/settings/SettingsPage.jsx'
+import AccountPage from '@/features/account/AccountPage.jsx'
+import ModpackPage from '@/features/mods/ModpackPage.jsx'
+import LocalJarPage from '@/features/launcher/LocalJarPage.jsx'
+import CrashPage from '@/features/crash/CrashPage.jsx'
+import JavaManagerPage from '@/features/settings/JavaManagerPage.jsx'
+import LobbyPage from '@/features/server/LobbyPage.jsx'
+import WorldManagerPage from '@/features/world/WorldManagerPage.jsx'
+import SkinPage from '@/features/account/SkinPage.jsx'
+import ModsPage from '@/features/mods/ModsPage.jsx'
+import InstancePage from '@/features/launcher/InstancePage.jsx'
+import ResourceCenterPage from '@/features/mods/ResourceCenterPage.jsx'
+import MobileNav from '@/features/shell/components/MobileNav.jsx'
+import BackgroundLayer from '@/features/shell/components/BackgroundLayer.jsx'
+import LaunchTransition from '@/features/shell/components/LaunchTransition.jsx'
+import UpdateBanner from '@/features/shell/components/UpdateBanner.jsx'
+import CrashDialog from '@/features/shell/components/CrashDialog.jsx'
+import { InstanceProvider, useInstance } from '@/features/shell/InstanceContext.jsx'
+import { api, isMobile, createSubscriptionSet } from '@/services'
 export default function App() {
+  return (
+    <InstanceProvider>
+      <AppShell />
+    </InstanceProvider>
+  )
+}
+
+function AppShell() {
+  const { switching } = useInstance()
   const [page, setPage] = useState('home')
   const [settings, setSettings] = useState(() => {
     try {
@@ -45,12 +55,14 @@ export default function App() {
   }, [settings.theme])
 
   useEffect(() => {
-    const api = window.mcnext
-    if (!api) return
-    api.onGameExit(() => setGameRunning(false))
-    api.onServerExit(() => setServerRunning(false))
+    if (!api.isAvailable()) return
+    // 0.9.0 模块二C：订阅必须随组件卸载注销，杜绝反复挂载累积监听器
+    const subs = createSubscriptionSet()
+    subs.add(api.onGameExit(() => setGameRunning(false)))
+    subs.add(api.onServerExit(() => setServerRunning(false)))
     api.gameStatus().then(setGameRunning)
     api.serverStatus().then(setServerRunning)
+    return () => subs.disposeAll()
   }, [])
 
   // 0.5.0 模块一：启动过渡动画，返回 Promise 供 HomePage 与真实启动并行等待
@@ -72,7 +84,7 @@ export default function App() {
   return (
     <div className="app-root">
       <BackgroundLayer config={settings.background} />
-      <div className={`app-shell flex flex-col ${launchFx ? 'app-shell-launching' : ''}`}>
+      <div className={`app-shell flex flex-col ${launchFx ? 'app-shell-launching' : ''} ${switching ? 'instance-switching' : ''}`}>
         {!isMobile && <TitleBar />}
         <UpdateBanner />
         <div className="flex-1 flex min-h-0">
@@ -100,6 +112,8 @@ export default function App() {
         {isMobile && <MobileNav page={page} setPage={setPage} gameRunning={gameRunning} />}
       </div>
       {launchFx && <LaunchTransition version={launchFx.version} onDone={() => setLaunchFx(null)} />}
+      {/* 0.7.0 模块四：全局崩溃弹窗，崩溃时强制复位 gameRunning，绝不卡在「启动中」 */}
+      <CrashDialog setGameRunning={setGameRunning} goto={setPage} />
     </div>
   )
 }

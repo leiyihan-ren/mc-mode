@@ -99,19 +99,45 @@ function buildJvmArgs(versionJson, ctx = {}) {
   return { jvmArgs, gameArgs, classpath: ctx.classpath, substitutions: subs };
 }
 
+/** zip 条目名归一：反斜杠转斜杠、去掉前导斜杠（不同打包工具差异） */
+function normalizeZipEntryName(name) {
+  return String(name || '').replace(/\\/g, '/').replace(/^\/+/, '');
+}
+
+/** 拒绝 Zip-Slip / 绝对盘符 / NUL 等恶意或畸形条目 */
+function isUnsafeZipEntry(name) {
+  if (!name || name.includes('\0')) return true;
+  if (/^[A-Za-z]:[\\/]/.test(name)) return true;
+  if (/(^|\/)\.\.(\/|$)/.test(name)) return true;
+  return false;
+}
+
+/** 二次确认：解析后的目标路径必须仍落在 root 内 */
+function isInsideDir(root, target) {
+  const r = path.relative(root, target);
+  return r === '' || (!r.startsWith('..' + path.sep) && r !== '..' && !path.isAbsolute(r));
+}
+
 /**
- * 解压 natives jar 到目录（跳过 META-INF）
+ * 解压 natives jar 到目录（跳过 META-INF）。
+ *
+ * 0.7.0 模块二：
+ *  - 目标目录统一 path.resolve，全程使用 Node fs API，不拼 shell 命令，
+ *    因此中文路径 / 带空格路径在 Windows、Linux、macOS 下都不会因引号解析失败。
+ *  - 增加 Zip-Slip 与畸形条目防护，避免第三方 natives jar 写出目录之外。
+ *
  * @param versionJson 版本 JSON
  * @param nativesDir 解压目标目录
  * @param env 运行环境 {os, arch}
  * @param opts.libRoot 本地 maven 仓库根目录；缺省时按 nativesDir/../libraries 推断
- * @returns {{ extracted:number, skipped:number }}
+ * @returns {{ extracted:number, skipped:number, rejected:number, dir:string }}
  */
 function extractNatives(versionJson, nativesDir, env, opts = {}) {
   env = env || defaultEnv();
-  fs.mkdirSync(nativesDir, { recursive: true });
-  const libRoot = opts.libRoot || path.join(nativesDir, '..', 'libraries');
-  let extracted = 0, skipped = 0;
+  const root = path.resolve(nativesDir);
+  fs.mkdirSync(root, { recursive: true });
+  const libRoot = opts.libRoot || path.join(root, '..', 'libraries');
+  let extracted = 0, skipped = 0, rejected = 0;
   const libs = (versionJson.libraries || []).map(normalizeLibrary).filter(Boolean);
   for (const lib of libs) {
     if (!isNativesLib(lib, env)) continue;
@@ -121,14 +147,20 @@ function extractNatives(versionJson, nativesDir, env, opts = {}) {
     try { zip = new AdmZip(jarPath); } catch { skipped++; continue; }
     for (const e of zip.getEntries()) {
       if (e.isDirectory) continue;
-      if (/^META-INF\//.test(e.entryName)) continue;
-      const out = path.join(nativesDir, e.entryName);
+      const name = normalizeZipEntryName(e.entryName);
+      if (/^META-INF\//i.test(name)) { skipped++; continue; }
+      if (isUnsafeZipEntry(name)) { rejected++; continue; }
+      const out = path.join(root, name);
+      if (!isInsideDir(root, out)) { rejected++; continue; }
       fs.mkdirSync(path.dirname(out), { recursive: true });
       fs.writeFileSync(out, zip.readFile(e));
       extracted++;
     }
   }
-  return { extracted, skipped };
+  return { extracted, skipped, rejected, dir: root };
 }
 
-module.exports = { buildJvmArgs, buildSubstitutions, substitute, extractNatives };
+module.exports = {
+  buildJvmArgs, buildSubstitutions, substitute, extractNatives,
+  normalizeZipEntryName, isUnsafeZipEntry, isInsideDir
+};

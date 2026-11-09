@@ -29,8 +29,15 @@ public final class JvmBridge {
     public static native void applyRenderEnv(String[] keyValues);
 
     public static int launch(Context ctx, LaunchConfig cfg) {
+        // 0.7.0 模块三：按真实 GPU 信息解析后端（auto → 自动挑选；显式值 → 手动指定）。
+        // 把解析结果写回 cfg，确保 ArgBuilder 生成的 -Dorg.lwjgl.opengl.libname
+        // 与这里注入的进程环境变量来自同一个后端，绝不出现「环境是 Zink、库却是 GL4ES」。
+        GpuProbe.Info gpu = GpuProbe.detect(ctx);
+        RenderBackend backend = RenderBackend.resolve(cfg.renderer, gpu);
+        cfg.renderer = backend.id;
+
         String libDir = RuntimeManager.nativeLibDir(ctx);
-        Map<String, String> env = RenderBackend.select(cfg.renderer).env;
+        Map<String, String> env = backend.env;
         String[] kv = new String[env.size()];
         int i = 0;
         for (Map.Entry<String, String> e : env.entrySet()) kv[i++] = e.getKey() + "=" + e.getValue();

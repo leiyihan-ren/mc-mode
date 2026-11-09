@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "_note": "0.9.0 模块二B：APK 瘦身规则单一数据源，供 tools/apk-slim.cjs 与 build-unified-apk.sh 产物校验共用。白名单式：只删 JDK 编译期/开发期、运行时零引用的文件；JRE modules、全部 .so、字体、安全配置一律保留。",
+  "dropExact": [
+    "lib/ct.sym",
+    "lib/classlist",
+    "lib/fontconfig.properties.src",
+    "lib/fontconfig.Linux.properties.src",
+    "lib/psfont.properties.ja",
+    "lib/psfontj2d.properties"
+  ],
+  "dropPrefix": [
+    "man/",
+    "lib/jfr/",
+    "conf/management/",
+    "conf/sdp/"
+  ],
+  "dropSuffix": [".src"],
+  "dropBinExcept": ["java"],
+  "mustKeepRuntime": [
+    "lib/modules",
+    "conf/security/java.security",
+    "lib/security/cacerts",
+    "lib/tzdb.dat",
+    "lib/jrt-fs.jar",
+    "lib/jspawnhelper",
+    "lib/jvm.cfg",
+    "lib/fonts",
+    "bin/java",
+    "release"
+  ],
+  "apkMustKeep": [
+    "assets/runtime/lib/modules",
+    "assets/runtime/conf/security/java.security",
+    "lib/arm64-v8a/libjvm.so",
+    "lib/arm64-v8a/libgl4es_114.so",
+    "lib/arm64-v8a/libmcnext_jni.so",
+    "assets/public/index.html",
+    "assets/release.json"
+  ],
+  "apkForbiddenExact": [
+    "assets/runtime/lib/ct.sym",
+    "assets/runtime/lib/classlist"
+  ],
+  "apkForbiddenPrefix": [
+    "assets/runtime/man/",
+    "assets/runtime/lib/jfr/",
+    "assets/runtime/conf/management/",
+    "assets/runtime/conf/sdp/"
+  ]
+}

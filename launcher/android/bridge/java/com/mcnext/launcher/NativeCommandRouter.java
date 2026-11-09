@@ -4,9 +4,13 @@ import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
 
+import com.mcnext.launcher.input.InputBridge;
+
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.util.Collections;
+import java.util.List;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -40,6 +44,12 @@ public final class NativeCommandRouter {
     private volatile SurfaceProvider surfaceProvider;
     private volatile Thread jvmThread;
     private volatile boolean running = false;
+    /** 0.7.0 模块四：本次 JVM 会话的崩溃守护器（logcat 逐行拦截 + 退出兜底） */
+    private volatile AndroidCrashGuard crashGuard;
+    /** 0.9.0 模块一C：JNI 崩溃防线安装标记（只装一次） */
+    private boolean crashGuardInstalled = false;
+    /** 上次会话遗留的原生崩溃报告，等 WebView 就绪（首次 invoke）后再 flush，避免事件丢失 */
+    private volatile NativeCrashReport.Report pendingCrashReport = null;
 
     public NativeCommandRouter(Context ctx, EventSink sink) {
         this.ctx = ctx.getApplicationContext();
@@ -50,15 +60,24 @@ public final class NativeCommandRouter {
 
     /** @return 可直接 JSON.parse 的结果字符串（与桌面 IPC 返回值同构） */
     public String invoke(String channel, String argsJson, String pc) {
+        // 0.9.0 模块一C：先把上次会话遗留的原生崩溃报告发给已就绪的 WebView
+        flushPendingCrash();
+        ensureCrashGuard();
+        String result;
         try {
             JSONArray args = new JSONArray(argsJson == null || argsJson.isEmpty() ? "[]" : argsJson);
             String kind = BridgeContract.classify(channel);
-            if ("native".equals(kind)) return invokeNative(channel, args);
-            if ("remote".equals(kind)) return invokeRemote(channel, args, pc);
-            return err("未知指令 " + channel + "（不在 preload 契约白名单内）");
-        } catch (Exception e) {
-            return err("指令 " + channel + " 执行失败: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+            if ("native".equals(kind)) result = invokeNative(channel, args);
+            else if ("remote".equals(kind)) result = invokeRemote(channel, args, pc);
+            else result = err("未知指令 " + channel + "（不在 preload 契约白名单内）");
+        } catch (Throwable t) {
+            // 0.9.0 模块一C：覆盖 Error（含 UnsatisfiedLinkError / JNI 链接失败），不止 Exception
+            emitCrashIfAny(NativeCrashReport.fromThrowable(channel, t));
+            return err("指令 " + channel + " 执行失败: " + t.getClass().getSimpleName() + ": " + t.getMessage());
         }
+        // JNI dispatch 返回的结构化 nativeCrash 结果 → 弹窗，而不是静默失败 / 闪退
+        emitCrashIfAny(NativeCrashReport.fromDispatch(channel, result));
+        return result;
     }
 
     // ============================ native 落点 ============================
@@ -98,35 +117,80 @@ public final class NativeCommandRouter {
             if (o.has("maxMemoryMb")) cfg.maxMemoryMb = o.optInt("maxMemoryMb", cfg.maxMemoryMb);
         }
 
+        // 0.7.0 模块三：按真实 GPU 自动挑选渲染后端；启动失败沿降级链继续尝试。
+        // 手动：launch.json / 启动参数里显式写 gl4es|angle|virgl|zink，只跑指定后端。
+        final GpuProbe.Info gpu = GpuProbe.detect(ctx);
+        final boolean auto = cfg.renderer == null || cfg.renderer.trim().isEmpty()
+                || "auto".equalsIgnoreCase(cfg.renderer.trim());
+        final List<RenderBackend> chain = auto
+                ? RenderBackend.fallbackChain(gpu)
+                : Collections.singletonList(RenderBackend.resolve(cfg.renderer, gpu));
+
         if (surfaceProvider != null) surfaceProvider.show();
         BridgeNative.dispatch("jvm.begin", "{}");
         running = true;
+        // 0.7.0 模块四：本次会话崩溃守护器；logcat 与 JVM 线程共享，命中致命特征即弹窗。
+        crashGuard = new AndroidCrashGuard();
         emit("game:log", "level", "info", "text",
-                "[MC-Next] 启动 JVM | " + cfg.version + " | " + cfg.renderer
+                "[MC-Next] 启动 JVM | " + cfg.version + " | GPU " + gpu.summary()
+                        + " | 后端 " + (auto ? "自动" : "手动") + " " + chain.size() + " 个候选"
                         + " | mainClass=" + cfg.mainClass);
         startLogcatPump();
 
         jvmThread = new Thread(() -> {
             int code = -900;
             try {
-                code = JvmBridge.launch(ctx, cfg);   // ← 真实 dlopen(libjvm.so) + JNI_CreateJavaVM
+                for (int i = 0; i < chain.size(); i++) {
+                    RenderBackend b = chain.get(i);
+                    cfg.renderer = b.id;   // JvmBridge 环境变量与 ArgBuilder GL 库名共用同一后端
+                    emit("game:log", "level", "info", "text",
+                            "[MC-Next] 渲染后端 " + (i + 1) + "/" + chain.size() + ": "
+                                    + b.displayName + " (" + b.id + ")");
+                    try {
+                        code = JvmBridge.launch(ctx, cfg);   // 真实 dlopen(libjvm.so) + JNI_CreateJavaVM
+                    } catch (Throwable t) {
+                        code = -901;
+                        String el = "[MC-Next] JVM 启动异常: " + t;
+                        emit("game:log", "level", "error", "text", el);
+                        emitCrashIfAny(crashGuard.ingest(el));
+                    }
+                    if (code == 0) break;
+                    // 启动失败 / JVM 中途崩溃：立刻释放所有虚拟按键，避免卡在「一直按下」
+                    InputBridge.releaseAllHeld();
+                    if (i + 1 < chain.size()) {
+                        emit("game:log", "level", "warn", "text",
+                                "[MC-Next] 后端 " + b.id + " 未成功(code=" + code
+                                        + ")，自动降级到 " + chain.get(i + 1).displayName);
+                    }
+                }
             } catch (Throwable t) {
-                emit("game:log", "level", "error", "text", "[MC-Next] JVM 启动异常: " + t);
+                String el = "[MC-Next] 渲染后端调度异常: " + t;
+                emit("game:log", "level", "error", "text", el);
+                emitCrashIfAny(crashGuard.ingest(el));
             } finally {
+                InputBridge.releaseAllHeld();   // 正常退出同样归零，杜绝残留按下状态
                 running = false;
                 BridgeNative.dispatch("jvm.end", "{\"code\":" + code + "}");
                 String lastErr = JvmBridge.lastError();
+                // 0.7.0 模块四：异常退出兜底，绝不让 UI 静默停在「启动中」。
+                // 自动降级链全部失败才算真崩溃；成功(code==0) 由 finish 内部判定不报。
+                emitCrashIfAny(crashGuard.finish(code, lastErr));
                 emit("game:exit", "code", code, "error", lastErr == null ? "" : lastErr);
                 if (surfaceProvider != null) surfaceProvider.hide();
             }
         }, "mcnext-jvm");
         jvmThread.start();
 
+        org.json.JSONArray chainJson = new org.json.JSONArray();
+        for (RenderBackend b : chain) chainJson.put(b.id);
         return new JSONObject()
                 .put("ok", true)
                 .put("started", true)
                 .put("version", cfg.version)
                 .put("renderer", cfg.renderer)
+                .put("rendererAuto", auto)
+                .put("rendererChain", chainJson)
+                .put("gpu", gpu.summary())
                 .put("mainClass", cfg.mainClass)
                 .put("platform", "android")
                 .toString();
@@ -145,6 +209,9 @@ public final class NativeCommandRouter {
                 String line;
                 while (running && (line = r.readLine()) != null) {
                     emit("game:log", "level", "info", "text", line);
+                    // 0.7.0 模块四：JNI / JVM 日志逐行喂入崩溃守护，命中致命特征立即弹窗。
+                    AndroidCrashGuard g = crashGuard;
+                    if (g != null) emitCrashIfAny(g.ingest(line));
                 }
             } catch (Exception e) {
                 emit("game:log", "level", "warn", "text",
@@ -157,6 +224,9 @@ public final class NativeCommandRouter {
     }
 
     private String stopGame() {
+        // 用户主动停止：标记守护器，避免 TERM 退出被误判成崩溃弹窗。
+        AndroidCrashGuard g = crashGuard;
+        if (g != null) g.markIntentional();
         String r = BridgeNative.dispatch("jvm.requestStop", "{}");
         emit("game:log", "level", "info", "text", "[MC-Next] 已向 JNI 发送 DestroyJavaVM 请求");
         return r;
@@ -303,7 +373,8 @@ public final class NativeCommandRouter {
             c.setConnectTimeout(8000);
             c.setReadTimeout(12000);
             c.setRequestProperty("Accept", "application/vnd.github+json");
-            c.setRequestProperty("User-Agent", "MC-Next-Updater/0.6.0");
+            // 0.9.0：UA 版本从 release.json 的 tag 派生，与桌面端单一数据源一致，不再硬编码。
+            c.setRequestProperty("User-Agent", "MC-Next-Updater/" + (current.isEmpty() ? "dev" : current));
             int code = c.getResponseCode();
             InputStream in = code >= 400 ? c.getErrorStream() : c.getInputStream();
             if (code >= 400 || in == null) return err("GitHub 版本检查失败 HTTP " + code);
@@ -402,6 +473,97 @@ public final class NativeCommandRouter {
     }
 
     // ============================ 工具 ============================
+
+    /**
+     * 0.9.0 模块一C：安装 JNI 崩溃防线并读取上次会话遗留的崩溃标记（只执行一次）。
+     * 崩溃标记由 C 层 signal handler 用 async-signal-safe 调用落盘；这里在 App 启动、
+     * WebView 就绪前读取，缓存到 pendingCrashReport，待首次 invoke 时 flush 弹窗。
+     * 防线安装失败（如 so 未就绪）如实降级到既有 logcat 守护，不阻断启动。
+     */
+    private synchronized void ensureCrashGuard() {
+        if (crashGuardInstalled) return;
+        crashGuardInstalled = true;
+        try {
+            java.io.File f = new java.io.File(ctx.getFilesDir(), "mcnext_native_crash.json");
+            String args = new JSONObject().put("path", f.getAbsolutePath()).toString();
+            String r = BridgeNative.dispatch("probe.crashGuard", args);
+            Object lc = new JSONObject(r).opt("lastCrash");
+            if (lc != null && lc != JSONObject.NULL) {
+                NativeCrashReport.Report report = NativeCrashReport.fromMarker(lc.toString());
+                if (report != null) pendingCrashReport = report;
+            }
+        } catch (Throwable ignored) { /* 如实降级，不阻断启动 */ }
+    }
+
+    /** 上次会话崩溃报告延迟到 WebView 就绪后发送，避免构造期事件无人订阅而丢失。 */
+    private void flushPendingCrash() {
+        NativeCrashReport.Report r = pendingCrashReport;
+        if (r == null) return;
+        pendingCrashReport = null;
+        emitCrashIfAny(r);
+    }
+
+    /**
+     * 0.9.0 模块一C：把 JNI 原生层崩溃报告转成与桌面 guardian.cjs 同构的
+     * game:crash 载荷，供前端 CrashDialog 统一弹窗。null 表示无需上报。
+     */
+    private void emitCrashIfAny(NativeCrashReport.Report r) {
+        if (r == null || sink == null) return;
+        try {
+            JSONArray suggestions = new JSONArray();
+            for (String s : r.suggestions) suggestions.put(s);
+            JSONArray evidence = new JSONArray();
+            for (String e : r.evidence) evidence.put("[jni] " + e);
+            JSONObject p = new JSONObject()
+                    .put("ok", false)
+                    .put("code", r.code)
+                    .put("title", r.title)
+                    .put("severity", r.severity)
+                    .put("reason", r.reason)
+                    .put("human", r.human)
+                    .put("source", r.source)
+                    .put("stream", r.stream)
+                    .put("exitCode", JSONObject.NULL)
+                    .put("suggestions", suggestions)
+                    .put("evidence", evidence)
+                    .put("at", r.at)
+                    .put("platform", "android");
+            if (r.signal > 0) p.put("signal", r.signal);
+            else p.put("signal", JSONObject.NULL);
+            emit("game:crash", p);
+        } catch (Exception ignored) { /* 单条坏报告不打断流程 */ }
+    }
+
+    /**
+     * 0.7.0 模块四：把 AndroidCrashGuard.Report 转成与桌面 guardian.cjs 同构的
+     * game:crash 载荷，供前端 CrashDialog 统一弹窗。null 表示无需上报。
+     */
+    private void emitCrashIfAny(AndroidCrashGuard.Report r) {
+        if (r == null || sink == null) return;
+        try {
+            JSONArray suggestions = new JSONArray();
+            for (String s : r.suggestions) suggestions.put(s);
+            JSONArray evidence = new JSONArray();
+            for (String e : r.evidence) evidence.put("[stderr] " + e);
+            JSONObject p = new JSONObject()
+                    .put("ok", false)
+                    .put("code", r.code)
+                    .put("title", r.title)
+                    .put("severity", r.severity)
+                    .put("reason", r.reason)
+                    .put("human", r.human)
+                    .put("source", r.source)
+                    .put("stream", "stderr")
+                    .put("exitCode", r.exitCode)
+                    .put("signal", JSONObject.NULL)
+                    .put("suggestions", suggestions)
+                    .put("evidence", evidence)
+                    .put("at", System.currentTimeMillis())
+                    .put("platform", "android");
+            emit("game:crash", p);
+        } catch (Exception ignored) { /* 单条坏报告不打断 JVM 退出流程 */ }
+    }
+
     private void emit(String channel, JSONObject payload) {
         if (sink != null) sink.emit(channel, payload.toString());
     }

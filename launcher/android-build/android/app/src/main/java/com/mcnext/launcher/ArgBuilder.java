@@ -1,6 +1,7 @@
 package com.mcnext.launcher;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -10,9 +11,43 @@ import java.util.List;
  *  - -Djava.library.path / -Dorg.lwjgl.librarypath 指向 JRE 与 GL4ES 等 native 目录
  *  - -Duser.dir / -Duser.home 指向实例 gameDir（版本隔离）
  *  - -cp 为完整 classpath，mainClass 之后是 --gameDir/--assetsDir/--accessToken 等游戏参数
+ *
+ * 0.7.0 模块三：追加移动端专用 GC 调度参数，减少后台 GC 线程唤醒、降低卡顿与发热。
  */
 public final class ArgBuilder {
     private ArgBuilder() {}
+
+    /**
+     * 移动端 GC 调度基准参数。
+     * Android 设备核心少、散热受限，默认 G1 的并发标记线程会持续唤醒 CPU；
+     * SerialGC 把 GC 线程数降到 1，固定堆伸缩比减少 heap resize 抖动，
+     * -XX:-UsePerfData 避免写 /tmp/hsperfdata 产生后台 IO。
+     */
+    public static List<String> mobileGcOptions() {
+        return new ArrayList<>(Arrays.asList(
+                "-XX:+UseSerialGC",
+                "-XX:MinHeapFreeRatio=20",
+                "-XX:MaxHeapFreeRatio=40",
+                "-XX:-UsePerfData"
+        ));
+    }
+
+    /** 用户已显式选择 GC 实现时不覆盖，只保留与实现无关的调优项 */
+    public static List<String> mobileGcOptions(LaunchConfig c) {
+        List<String> out = mobileGcOptions();
+        List<String> extra = c == null ? null : c.extraVmArgs;
+        boolean userPickedGc = false;
+        if (extra != null) {
+            for (String s : extra) {
+                if (s != null && s.startsWith("-XX:+Use") && s.endsWith("GC")) {
+                    userPickedGc = true;
+                    break;
+                }
+            }
+        }
+        if (userPickedGc) out.remove("-XX:+UseSerialGC");
+        return out;
+    }
 
     public static List<String> buildVmOptions(LaunchConfig c) {
         c.validate();
@@ -34,6 +69,7 @@ public final class ArgBuilder {
         a.add("-Dfml.ignorePatchDiscrepancies=true");
         a.add("-Dlog4j2.formatMsgNoLookups=true");
         for (String p : backend.jvmProperties()) a.add(p);
+        a.addAll(mobileGcOptions(c));
         a.addAll(c.extraVmArgs);
         a.add("-cp");
         a.add(c.classpath);

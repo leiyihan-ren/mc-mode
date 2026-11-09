@@ -1,10 +1,11 @@
 {
-  "start": "2026-10-25T10:15:02.041Z",
+  "start": "2026-11-09T13:43:05.944Z",
   "scenarios": [
     {
       "name": "E2E-1 原版客户端依赖补全与启动参数",
       "pass": true,
-      "detail": "下载 0 个依赖(SHA1全部一致) / natives 7 个 / 剩余缺失 0",
+      "detail": "源=mojang-official (piston-meta.mojang.com) / 下载 0 个依赖(SHA1全部一致) / natives 7 个 / 剩余缺失 0",
+      "source": "mojang-official (piston-meta.mojang.com)",
       "downloaded": 0,
       "natives": 7,
       "missing": 0,
@@ -18,17 +19,21 @@
     {
       "name": "E2E-3 Fabric 服务端部署-启动-停止",
       "pass": true,
-      "detail": "退出码=0 Fabric加载=true 日志尾部=M-1): All chunks are saved | [18:17:08] [Server thread/INFO]: ThreadedAnvilChunkStorage (DIM1): All chunks are saved | [18:17:08] [Server thread/INFO]: ThreadedAnvilChunkStorage: All dimensions are saved | "
+      "detail": "退出码=0 Fabric加载=true 日志尾部=M-1): All chunks are saved | [21:45:04] [Server thread/INFO]: ThreadedAnvilChunkStorage (DIM1): All chunks are saved | [21:45:04] [Server thread/INFO]: ThreadedAnvilChunkStorage: All dimensions are saved | "
     },
     {
       "name": "E2E-4 NeoForge Installer 部署",
       "pass": true,
-      "detail": "类型=neoforge-installer 预下载=82/83(失败1) installer退出码=1 libraries目录=true run脚本=false 核心jar=null [环境受限: maven.neoforged.net 被沙箱阻断, 缺失件=net/neoforged/JarJarFileSystems/0.4.0/JarJarFileSystems-0.4.0.jar]",
+      "detail": "类型=neoforge-installer 预下载=81/83(失败2) installer退出码=1 libraries目录=true run脚本=false 核心jar=null [环境受限: maven.neoforged.net 被沙箱阻断, 缺失件=org/ow2/asm/asm/9.5/asm-9.5.jar,net/neoforged/JarJarFileSystems/0.4.0/JarJarFileSystems-0.4.0.jar]",
       "prefetch": {
         "total": 83,
-        "ok": 82,
-        "fail": 1,
+        "ok": 81,
+        "fail": 2,
         "failures": [
+          {
+            "path": "org/ow2/asm/asm/9.5/asm-9.5.jar",
+            "error": "下载失败（https://bmclapi2.bangbang93.com/maven/org/ow2/asm/asm/9.5/asm-9.5.jar）: https://bmclapi2.bangbang93.com/maven/org/ow2/asm/asm/9.5/asm-9"
+          },
           {
             "path": "net/neoforged/JarJarFileSystems/0.4.0/JarJarFileSystems-0.4.0.jar",
             "error": "下载失败（https://bmclapi2.bangbang93.com/maven/net/neoforged/JarJarFileSystems/0.4.0/JarJarFileSystems-0.4.0.jar）: https://bmclapi2.bangbang93.c"
@@ -44,7 +49,7 @@
       "detail": "下载SHA1一致=true 镜像候选=true 损坏拦截=true 实际使用=https://piston-data.mojang.com/v1/objects/ba2df812c2d12e0219"
     }
   ],
-  "end": "2026-10-25T10:17:55.766Z",
+  "end": "2026-11-09T13:51:08.414Z",
   "pass": 5,
   "total": 5,
   "envBlocked": 1

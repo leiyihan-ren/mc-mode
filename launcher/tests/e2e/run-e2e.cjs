@@ -21,6 +21,7 @@ const { buildJvmArgs, extractNatives } = require(path.join(ENGINE, 'jvmArgs'));
 const { deployServer, JAR_KINDS } = require(path.join(ENGINE, 'serverDeploy'));
 const { GameLauncher, stripAnsi } = require(path.join(ENGINE, 'launcher'));
 const { mirrorCandidates } = require(path.join(ENGINE, 'sources'));
+const { parseVersionManifest } = require(path.join(ENGINE, 'manifest'));
 
 const JAVA = process.env.E2E_JAVA || 'java';
 const MC_VERSION = '1.20.4'; // Java 20 兼容（要求 17+）
@@ -66,11 +67,37 @@ function startServer(jarOrArgs, cwd, opts = {}) {
   });
 }
 
+/**
+ * 0.9.0 通宵加固：版本 JSON 真实多源降级（不伪造数据，只换可达的官方源）。
+ * 沙箱里 bmclapi2 的 /version/<id>/json 端点会 fetch failed，但 Mojang 官方
+ * version_manifest_v2 → piston-meta 的 package json 与 libraries.minecraft.net 均可达。
+ * 优先复用引擎 fetchJson 的多源能力；失败后再走「官方清单解析出该版本 url → 拉真实 json」。
+ * 返回 { vj, source }，source 会写进 E2E 报告，明确本轮究竟用了哪个源。
+ */
+async function fetchLauncherVersionJson() {
+  const bmclapi = `https://bmclapi2.bangbang93.com/version/${MC_VERSION}/json`;
+  try {
+    const vj = await fetchJson(bmclapi, { timeoutMs: 20000, retries: 0 });
+    return { vj, source: 'bmclapi2' };
+  } catch (e) {
+    // 真实官方源：Mojang 官方清单 → 目标版本 package json（引擎 manifest 解析，同源复用）
+    const manifest = await fetchJson(
+      'https://launchermeta.mojang.com/mc/game/version_manifest_v2.json',
+      { timeoutMs: 20000, retries: 1, preferMirror: false });
+    const parsed = parseVersionManifest(manifest);
+    const entry = parsed.versions.find(v => v.id === MC_VERSION);
+    if (!entry || !entry.url) throw new Error(`官方清单未找到 ${MC_VERSION} 的 version json`);
+    const vj = await fetchJson(entry.url, { timeoutMs: 20000, retries: 1, preferMirror: false });
+    return { vj, source: `mojang-official (${new URL(entry.url).host})` };
+  }
+}
+
 async function scenario1() {
   console.log('\n===== E2E-1 原版客户端依赖补全 =====');
   const name = 'E2E-1 原版客户端依赖补全与启动参数';
   try {
-    const vj = await fetchJson(`https://bmclapi2.bangbang93.com/version/${MC_VERSION}/json`, { timeoutMs: 30000 });
+    const { vj, source } = await fetchLauncherVersionJson();
+    console.log(`  version json 源: ${source}`);
     const env = defaultEnv();
     const cp = buildClasspath(vj, { repoRoot: path.join(WORK, 'libraries'), env, gameJarPath: CLIENT_JAR });
     console.log(`  缺失依赖: ${cp.missing.length} 个`);
@@ -102,8 +129,8 @@ async function scenario1() {
     const pass = cp2.missing.length === 0 && nat.extracted > 0 && jvmArgs.includes('-Xmx1G')
       && jvmArgs.some(a => a.includes('java.library.path')) && gameArgs.includes('--username');
     record(name, pass,
-      `下载 ${downloaded} 个依赖(SHA1全部一致) / natives ${nat.extracted} 个 / 剩余缺失 ${cp2.missing.length}`,
-      { downloaded, natives: nat.extracted, missing: cp2.missing.length, jvmArgCount: jvmArgs.length });
+      `源=${source} / 下载 ${downloaded} 个依赖(SHA1全部一致) / natives ${nat.extracted} 个 / 剩余缺失 ${cp2.missing.length}`,
+      { source, downloaded, natives: nat.extracted, missing: cp2.missing.length, jvmArgCount: jvmArgs.length });
   } catch (e) {
     record(name, false, e.message);
   }

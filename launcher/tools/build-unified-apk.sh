@@ -14,13 +14,18 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CAP="$ROOT/android-build"
 SRC="$ROOT/android/app/src/main"
 BRIDGE="$ROOT/android/bridge"
-OUT="${1:-/workspace/MC-Next-Unified-0.6.0.apk}"
+OUT="${1:-/workspace/MC-Next-Unified-$(node -p "require('$ROOT/package.json').version").apk}"
 # debug（默认，沿用已验证链路）| release（正式版：真实 keystore 签名 + apksigner 验签）
 BUILD_TYPE="${MCNEXT_BUILD_TYPE:-debug}"
 case "$BUILD_TYPE" in
   debug|release) ;;
   *) echo "MCNEXT_BUILD_TYPE 只能是 debug 或 release" >&2; exit 1 ;;
 esac
+# 0.9.0 模块二B：压缩 jniLibs 的 .so，消除 zipalign 页对齐 padding。
+# 实测同一代码快照 APK 105.84 MiB -> 68.19 MiB（-35.6%），且与 AndroidManifest 的
+# extractNativeLibs="true" / 代码依赖 nativeLibraryDir 的设计意图一致。
+# 设为 0 可一键回退到 v0.6.0/v0.7.0 已验证的 STORED .so 链路（供真机对比验证）。
+MCNEXT_LEGACY_PACKAGING="${MCNEXT_LEGACY_PACKAGING:-1}"
 
 export JAVA_HOME="${JAVA_HOME:-$(ls -d /root/.sdkman/candidates/java/current)}"
 export ANDROID_HOME="${ANDROID_HOME:-/opt/android-sdk}"
@@ -73,13 +78,38 @@ cp -r "$SRC/assets/runtime" "$ASSET_DST/runtime"
 cp -f "$ROOT/config/release.json" "$ASSET_DST/release.json"
 echo "  .so count: $(find "$LIB_DST" -name '*.so' | wc -l)"
 
-echo "[6/9] 注入 CMake externalNativeBuild（幂等）"
-python3.11 - "$CAP/android/app/build.gradle" <<'PY'
-import sys
+# MCNEXT_SKIP_SLIM=1 用于同一代码快照下的 A/B 体积对比基线（跳过瘦身，其余流程完全一致）
+if [ "${MCNEXT_SKIP_SLIM:-0}" = "1" ]; then
+  echo "[5.5/9] 跳过瘦身（MCNEXT_SKIP_SLIM=1，A/B 对比基线）"
+else
+  echo "[5.5/9] APK 体积瘦身：剔除 JDK 编译期/开发期文件（白名单式，保留全部运行时依赖）"
+  node "$ROOT/tools/apk-slim.cjs" apply "$ASSET_DST/runtime"
+  # 防御性规则：只保留 arm64-v8a 的 jniLibs（当前源已只有 arm64，防后续资源回退塞入其它 ABI）
+  find "$LIB_DST" -mindepth 1 -maxdepth 1 -type d ! -name 'arm64-v8a' -exec rm -rf {} + 2>/dev/null || true
+  echo "  保留 ABI: $(ls -1 "$LIB_DST" | tr '\n' ' ')"
+  echo "  runtime 剩余: $(find "$ASSET_DST/runtime" -type f | wc -l) 文件 / $(du -sh "$ASSET_DST/runtime" | cut -f1)"
+fi
+
+echo "[6/9] 注入 CMake externalNativeBuild + 签名配置归一化（幂等，按 BUILD_TYPE）"
+python3.11 - "$CAP/android/app/build.gradle" "$BUILD_TYPE" "$MCNEXT_LEGACY_PACKAGING" <<'PY'
+import sys, re
 from pathlib import Path
-p = Path(sys.argv[1])
+p = Path(sys.argv[1]); build_type = sys.argv[2]; legacy = sys.argv[3]
 s = p.read_text()
 changed = False
+# 0.9.0 模块二B 实验开关：压缩 jniLibs 里的 .so（消除 zipalign 页对齐 padding）。
+# 默认关闭（保持已验证链路）；启用后需真机验证 nativeLibraryDir 解压加载，见 DELIVERY-0.9.0.md。
+MARK = '    // [mcnext-legacy-packaging]'
+if legacy == '1' and MARK not in s:
+    s = s.replace('android {\n',
+        'android {\n' + MARK + ' 0.9.0 M2B 实验：压缩 .so 降低 APK 体积\n'
+        '    packagingOptions {\n        jniLibs { useLegacyPackaging = true }\n    }\n', 1)
+    changed = True
+    print('  injected useLegacyPackaging=true (experimental)')
+elif legacy != '1' and MARK in s:
+    s = re.sub(r'\n    // \[mcnext-legacy-packaging\].*?\n    \}\n', '\n', s, count=1, flags=re.S)
+    changed = True
+    print('  removed experimental useLegacyPackaging')
 if 'externalNativeBuild' not in s:
     s = s.replace('android {\n',
         'android {\n    externalNativeBuild {\n        cmake { path "src/main/jni/CMakeLists.txt" }\n    }\n', 1)
@@ -89,9 +119,16 @@ if 'abiFilters' not in s:
     s = s.replace('defaultConfig {\n',
         "defaultConfig {\n        ndk { abiFilters 'arm64-v8a' }\n", 1)
     changed = True
+# debug 构建：剥离上次 release 注入残留的 signingConfigs。
+# 否则 file(System.getenv("MCNEXT_KEYSTORE")) 在 debug 下取到 null → Cannot convert 'null' to File。
+if build_type != 'release' and 'mcnextRelease' in s:
+    s = re.sub(r'\n\s*signingConfigs \{\s*\n\s*mcnextRelease \{.*?\n\s*\}\s*\n\s*\}', '', s, count=1, flags=re.S)
+    s = re.sub(r'\n\s*signingConfig signingConfigs\.mcnextRelease', '', s)
+    changed = True
+    print('  stripped release signingConfigs for debug build')
 if changed:
     p.write_text(s)
-    print('  injected externalNativeBuild + arm64 abiFilters')
+    print('  gradle config patched')
 else:
     print('  gradle config already patched')
 PY
@@ -163,9 +200,9 @@ APK=$(ls "$CAP/android/app/build/outputs/apk/$BUILD_TYPE/"*.apk 2>/dev/null | he
 echo "  apk=$APK"
 
 echo "[9/9] 产物级校验：本轮 bundle / JRE / JNI 桥必须同时在 APK 内"
-python3.11 - "$APK" "$BUNDLE" <<'PY'
-import sys, zipfile
-apk, bundle = sys.argv[1], sys.argv[2]
+python3.11 - "$APK" "$BUNDLE" "$ROOT/tools/apk-slim.cjs" "${MCNEXT_SKIP_SLIM:-0}" <<'PY'
+import sys, zipfile, subprocess
+apk, bundle, slim_cli, skip_slim = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 with zipfile.ZipFile(apk) as z:
     names = set(z.namelist())
 checks = {
@@ -187,6 +224,20 @@ print(f'  arm64 .so 总数: {len(so)}')
 if bad:
     print('校验失败：缺少上述文件', file=sys.stderr)
     sys.exit(1)
+
+# 0.9.0 模块二B：瘦身产物级校验。
+# 判定逻辑只在 tools/apk-slim.cjs 实现一份（规则来自 apk-slim-rules.json），
+# 这里仅负责 zip 解析并把全部文件名经 stdin 交给 Node，避免规则两处重复。
+if skip_slim == '1':
+    print('  [apk-slim][audit] 基线构建（MCNEXT_SKIP_SLIM=1）：跳过瘦身残留检查')
+else:
+    r = subprocess.run(['node', slim_cli, 'audit'], input='\n'.join(names),
+                       text=True, capture_output=True)
+    print(r.stdout, end='')
+    if r.returncode != 0:
+        print(r.stderr, file=sys.stderr, end='')
+        print('产物级瘦身校验失败：必需文件缺失或瘦身项残留', file=sys.stderr)
+        sys.exit(1)
 PY
 
 if [ "$BUILD_TYPE" = "release" ]; then

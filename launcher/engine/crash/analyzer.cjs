@@ -12,6 +12,32 @@
  */
 'use strict';
 
+/**
+ * @typedef {Object} CrashFinding 单条诊断结论
+ * @property {string} code 规则码（OOM / JAVA_VERSION / MISSING_LIB / …）
+ * @property {string} title 人类可读标题
+ * @property {'fatal'|'error'|'warn'|'info'} severity 严重级别
+ * @property {string[]} matches 命中的原始日志行（最多 4 条，超长截断）
+ * @property {string[]} suggestions 可执行的排查建议
+ */
+
+/**
+ * @typedef {Object} CrashAnalysis analyzeCrash 的结构化输出（AI 可读）
+ * @property {boolean} ok 是否未发现 fatal/error 级问题
+ * @property {CrashFinding|null} primary 排序后的首要诊断
+ * @property {CrashFinding[]} findings 全部诊断结论（按严重级别排序）
+ * @property {number|null} javaRequired 从 class file version 推断的所需 Java 主版本
+ * @property {number|null} javaCurrent 当前 Java 主版本
+ * @property {string[]} modSuspects 从堆栈帧提取的可疑第三方包名
+ * @property {string[]} causedBy Caused by 链（最多 8 条）
+ * @property {string|null} description Minecraft 崩溃报告的 Description 字段
+ * @property {string|null} gameVersion 游戏版本
+ * @property {number|null} exitCode 进程退出码
+ * @property {string|null} signal 终止信号
+ * @property {number} totalLines 参与分析的日志行数
+ * @property {string} summary 一句话人话摘要
+ */
+
 /** class file major version → Java 主版本（真实 JVM 规范） */
 const JAVA_CLASS_VERSION = {
   45: 1, 46: 2, 47: 3, 48: 4, 49: 5, 50: 6, 51: 7, 52: 8,
@@ -102,8 +128,14 @@ function extractModSuspects(log) {
 }
 
 /**
- * 分析崩溃。
- * @param {string|object} input 日志文本或 {log, exitCode, signal, gameVersion, javaVersion}
+ * 分析崩溃：把原始日志归因为结构化、AI 可读的诊断结论。
+ *
+ * 规则源为模块内 RULES（单一数据源，guardian.cjs 复用），退出码/信号另按 EXIT_CODES 判定；
+ * 未命中任何特征时如实返回 ok:true / primary:null，绝不臆造结论。
+ *
+ * @param {string|{log?:string, exitCode?:number, signal?:string, gameVersion?:string, javaVersion?:number}} input
+ *   日志文本，或携带上下文的对象。
+ * @returns {CrashAnalysis} 结构化诊断结果
  */
 function analyzeCrash(input) {
   const o = typeof input === 'string' ? { log: input } : (input || {});

@@ -18,6 +18,7 @@ const http = require('http');
 const os = require('os');
 const path = require('path');
 const fs = require('fs');
+const fsp = fs.promises; // 0.9.0 模块二A：HTTP handler 内同步 IO 全部异步化，不阻塞主进程事件循环
 const { state, launchGameCore, logBuf, dispatchChannel, hasChannel } = require('./ipc.cjs');
 const { INVOKE_CHANNELS } = require('../engine/bridge/contract.cjs');
 
@@ -77,7 +78,7 @@ async function handle(req, res) {
     }
 
     if (req.method === 'GET' && url.pathname === '/api/clients') {
-      const clients = fs.readdirSync(REPO_CLIENT).filter(f => f.endsWith('.jar')).map(f => f.replace(/\.jar$/, '')).sort().reverse();
+      const clients = (await fsp.readdir(REPO_CLIENT)).filter(f => f.endsWith('.jar')).map(f => f.replace(/\.jar$/, '')).sort().reverse();
       json(res, 200, { ok: true, clients });
       return;
     }
@@ -92,18 +93,19 @@ async function handle(req, res) {
       if (!body.versionId) { json(res, 400, { ok: false, error: '缺少 versionId' }); return; }
       const versionJsonPath = path.join(os.homedir(), '.mc-next', 'versions', `${body.versionId}.json`);
       let versionJson = null;
-      if (fs.existsSync(versionJsonPath)) {
-        versionJson = JSON.parse(fs.readFileSync(versionJsonPath, 'utf8'));
-      } else {
+      try {
+        versionJson = JSON.parse(await fsp.readFile(versionJsonPath, 'utf8'));
+      } catch {
+        // 缓存缺失或损坏 → 走网络重新拉取（异步 read 替代 existsSync，语义更健壮）
         const { fetchJson } = require('../engine/http');
         versionJson = await fetchJson(`https://bmclapi2.bangbang93.com/version/${body.versionId}/json`, { timeoutMs: 30000 });
-        fs.mkdirSync(path.dirname(versionJsonPath), { recursive: true });
-        fs.writeFileSync(versionJsonPath, JSON.stringify(versionJson));
+        await fsp.mkdir(path.dirname(versionJsonPath), { recursive: true });
+        await fsp.writeFile(versionJsonPath, JSON.stringify(versionJson));
       }
       let extraJars = [];
       if (body.loader) {
         const p = path.join('/workspace/模组加载器', body.versionId, body.loader);
-        if (fs.existsSync(p)) extraJars = [p];
+        try { await fsp.access(p); extraJars = [p]; } catch { /* 加载器不存在则忽略 */ }
       }
       const r = await launchGameCore({
         versionId: body.versionId,
@@ -167,12 +169,13 @@ async function handle(req, res) {
 
 function startRemoteControl() {
   const server = http.createServer(handle);
+  // 0.7.0 模块一：清掉散落的 console.log，错误走 stderr、状态走 stdout（可被宿主日志系统接管）
   server.on('error', (e) => {
-    console.log(`[RemoteControl] 启动失败: ${e.message}`);
+    process.stderr.write(`[RemoteControl] 启动失败: ${e.message}\n`);
   });
   server.listen(PORT, '0.0.0.0', () => {
     const ips = localIPs().map(ip => `${ip}:${PORT}`).join(', ');
-    console.log(`[RemoteControl] 手机遥控已就绪 → ${ips || `localhost:${PORT}`}`);
+    process.stdout.write(`[RemoteControl] 手机遥控已就绪 → ${ips || `localhost:${PORT}`}\n`);
   });
   return server;
 }

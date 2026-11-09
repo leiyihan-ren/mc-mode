@@ -5,40 +5,51 @@
 
 const path = require('path');
 const fs = require('fs');
+const fsp = fs.promises; // 0.9.0 模块二A：主进程启动路径一律走异步 IO，不阻塞事件循环
 const { ipcMain, dialog, shell } = require('electron');
 const crypto = require('crypto');
+const { lazy } = require('./lazy.cjs'); // 0.9.0 模块二A：非核心功能服务惰性加载
+
+// —— 启动关键路径 / 核心引擎（顶层立即加载；均为轻量纯 JS，剖析合计 ~10ms）——
+// 这些模块参与启动、崩溃守护、下载链路或顶层单例，必须在首帧前就绪。
 const { GameLauncher, classifyLine, stripAnsi } = require('../engine/launcher');
 const { deployServer, detectJarKind } = require('../engine/serverDeploy');
 const { downloadFile, fetchJson } = require('../engine/http');
 const { OFFICIAL, SOURCE_POLICY } = require('../engine/sources');
 const { buildClasspath } = require('../engine/library');
-// —— 重构后的四大模块引擎 ——
 const isolation = require('../engine/isolation.cjs');
-const msAuth = require('../engine/auth/microsoft.cjs');
-const authlib = require('../engine/auth/authlib.cjs');
 const { downloadBatch } = require('../engine/downloader.cjs');
-const modpack = require('../engine/modpack.cjs');
-const localJar = require('../engine/localJar.cjs');
-const crashAnalyzer = require('../engine/crash/analyzer.cjs');
-const logCleaner = require('../engine/crash/logCleaner.cjs');
 const { highlight, parseLogLine } = require('../engine/server/console.cjs');
-// —— 生态扩展模块（0.3.0）——
-const javaMgr = require('../engine/java/manager.cjs');
-const lanRoom = require('../engine/net/room.cjs');
-const worldMgr = require('../engine/world/manager.cjs');
-const skinMgr = require('../engine/skin/manager.cjs');
-// —— 生态扩展模块（0.4.0）——
-const modsMgr = require('../engine/mods/manager.cjs');
-const netGuide = require('../engine/net/guide.cjs');
-// —— 极致体验模块（0.5.0）——
-const appearance = require('../engine/appearance.cjs');
-const modpackExport = require('../engine/modpackExport.cjs');
-// —— 商业级模块（0.6.0）——
-const { DeviceFlowManager } = require('../engine/auth/deviceFlow.cjs');
-const jvmMonitorMod = require('../engine/jvm/monitor.cjs');
-const modrinth = require('../engine/modrinth/client.cjs');
-const updater = require('../engine/updater.cjs');
+const { DeviceFlowManager } = require('../engine/auth/deviceFlow.cjs'); // 顶层单例：后台设备码轮询
+const preflight = require('../engine/preflight.cjs');
+const crashGuardian = require('../engine/crash/guardian.cjs');
+const crashReaper = require('../engine/crash/reaper.cjs');
+const ipcGuard = require('../engine/crash/ipcGuard.cjs');
+const speedtest = require('../engine/net/speedtest.cjs');
+const parallelDownload = require('../engine/net/parallelDownload.cjs');
 const releaseCfg = require('../config/release.json');
+
+// —— 非核心功能服务（0.9.0 模块二A 惰性加载）——
+// 这些服务在启动首帧前不会被访问，用 lazy 代理把 require 推迟到首次真实 IPC 调用；
+// 调用点保持 `X.method()` 形态不变（Proxy get 拦截），测试 stub 注入照常命中。
+// 真实剖析见 DELIVERY-0.9.0.md：收益是「启动期不解析/不常驻」，不虚报毫秒数。
+const msAuth = lazy(() => require('../engine/auth/microsoft.cjs'));
+const authlib = lazy(() => require('../engine/auth/authlib.cjs'));
+const modpack = lazy(() => require('../engine/modpack.cjs'));
+const localJar = lazy(() => require('../engine/localJar.cjs'));
+const crashAnalyzer = lazy(() => require('../engine/crash/analyzer.cjs'));
+const logCleaner = lazy(() => require('../engine/crash/logCleaner.cjs'));
+const javaMgr = lazy(() => require('../engine/java/manager.cjs'));
+const lanRoom = lazy(() => require('../engine/net/room.cjs'));
+const worldMgr = lazy(() => require('../engine/world/manager.cjs'));
+const skinMgr = lazy(() => require('../engine/skin/manager.cjs'));
+const modsMgr = lazy(() => require('../engine/mods/manager.cjs'));
+const netGuide = lazy(() => require('../engine/net/guide.cjs'));
+const appearance = lazy(() => require('../engine/appearance.cjs'));
+const modpackExport = lazy(() => require('../engine/modpackExport.cjs'));
+const jvmMonitorMod = lazy(() => require('../engine/jvm/monitor.cjs'));
+const modrinth = lazy(() => require('../engine/modrinth/client.cjs'));
+const updater = lazy(() => require('../engine/updater.cjs'));
 
 const os = require('os');
 const HOME = os.homedir();
@@ -65,6 +76,12 @@ const updateState = { downloading: false, last: null };
 /** 运行状态（模块级单例） */
 const state = { game: null, server: null, mainWindow: null };
 
+/** 0.7.0 模块四：全局进程登记（供主进程退出时兜底回收，杜绝僵尸 Java / Launcher 进程） */
+const processRegistry = new crashReaper.ProcessRegistry();
+function reapAllProcesses() {
+  return crashReaper.reapAll(processRegistry);
+}
+
 /**
  * 0.6.0 模块一：统一 IPC handler 注册表。
  * 桌面端照常 ipcMain.handle；Android 大一统 UI 的 remote 指令通过
@@ -73,8 +90,16 @@ const state = { game: null, server: null, mainWindow: null };
  */
 const HANDLERS = new Map();
 function handle(channel, fn) {
-  HANDLERS.set(channel, fn);
-  return ipcMain.handle(channel, fn);
+  // 0.9.0 模块一C：每个 IPC handler 统一套全局异常防线。
+  //  - 成功结果原样透传（零侵入，dispatchChannel / ipcMain.handle / /api/rpc 全覆盖）
+  //  - 抛错归一化为 { ok:false, error, ... }，绝不 rethrow，前端不会闪退或卡在「启动中」
+  //  - 命中 SIGSEGV / hs_err / UnsatisfiedLinkError 等原生层致命特征时，
+  //    额外 send('game:crash')，由 CrashDialog 弹人类可读提示（而不是启动器闪退）
+  const guarded = ipcGuard.wrapHandler(channel, fn, {
+    onFatal: (report) => send('game:crash', report)
+  });
+  HANDLERS.set(channel, guarded);
+  return ipcMain.handle(channel, guarded);
 }
 
 /** 按 channel 直接调用已注册的真实 handler（供远程 RPC / 测试复用） */
@@ -95,9 +120,8 @@ function getRoomManager() {
 function resolveGameDir(o) {
   const opt = o || {};
   if (opt.gameDir) {
-    const p = path.resolve(opt.gameDir);
-    if (!path.isAbsolute(p)) throw new Error('gameDir 必须是绝对路径');
-    return p;
+    if (!path.isAbsolute(opt.gameDir)) throw new Error('gameDir 必须是绝对路径');
+    return path.resolve(opt.gameDir);
   }
   if (opt.instanceId) return isolation.gameDirOf(LAUNCHER_DIR, isolation.safeId(opt.instanceId));
   return GAME_DIR;
@@ -122,30 +146,20 @@ async function launchGameCore(opts) {
   try {
     if (state.game && state.game.running) return { ok: false, error: '游戏已在运行' };
     const vj = opts.versionJson;
-    // 模块一：Java 管家自动分配——未显式指定 javaPath 时，扫描本机并匹配 MC 版本所需 Java
-    if (!opts.javaPath) {
-      try {
-        const local = javaMgr.scanLocalJava({ extraRoots: [] });
-        const sel = javaMgr.selectJava(local.list, opts.versionId);
-        if (sel.ok) opts.javaPath = sel.java.path;
-      } catch { /* 扫描失败时退回默认 java */ }
-    }
+    // 0.9.0 模块一A：多实例完全隔离。gameDir 由显式 gameDir / instanceId / 当前激活实例
+    // 三级解析，命中实例时 ensureInstance 保证 mods/saves/config 物理目录真实存在，
+    // JVM 的 --gameDir 指向该实例，Forge/Fabric/Quilt 从实例目录读取 mods/config/saves。
+    const dirSel = isolation.gameDirForLaunch(LAUNCHER_DIR, opts, GAME_DIR);
+    // 0.7.0 模块二：Java 自动分配与版本校验统一交给 preflight（含缓存，避免每次全盘扫描）
+    const nativesDir = path.join(LAUNCHER_DIR, 'natives', opts.versionId);
     const gameJar = path.join(REPO_CLIENT, `${opts.versionId}.jar`);
     const env = {
       os: process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'osx' : 'linux',
       arch: process.arch === 'ia32' ? 'x86' : process.arch,
       features: {}
     };
-    const cp = buildClasspath(vj, { repoRoot: LIBRARIES_DIR, env, gameJarPath: gameJar, extraJars: opts.extraJars || [] });
 
-    // 自动补全缺失依赖（多源降级：官方 → BMCLAPI）
-    for (const m of cp.missing) {
-      if (!m.url) continue;
-      send('game:log', { level: 'info', text: `[MC-Next] 补全依赖 ${m.path}` });
-      await downloadFile(m.url, m.local, { expectedSha1: m.sha1 });
-    }
-
-    // 模块一（0.5.0）：极客 JVM 面板 —— 推荐预设 + 自定义参数合成，内存由界面统一托管
+    // 极客 JVM 面板（0.5.0）：纯计算，提前到最前，供体检读取真实生效的内存值
     const jvm = appearance.mergeLaunchJvm({
       profileId: opts.jvmProfileId,
       extraJvmArgsText: opts.extraJvmArgsText,
@@ -160,6 +174,41 @@ async function launchGameCore(opts) {
       send('game:log', { level: 'info', text: `[MC-Next] 附加 ${jvm.jvmArgs.length} 个自定义 JVM 参数${jvm.profileId ? `（预设 ${jvm.profileId}）` : ''}` });
     }
 
+    // 0.7.0 模块二：启动前环境体检（Java 版本 / 内存防崩 / natives 中文空格路径）。
+    // 刻意排在补齐依赖之前：环境有问题时零网络请求、瞬间失败，不白等下载。
+    // 不新增 UI：拦截结果经既有 game:launch 返回值呈现到首页「启动失败」提示。
+    const pf = preflight.runPreflight({
+      mcVersion: opts.versionId,
+      javaPath: opts.javaPath || null,
+      minMemory: jvm.minMemory,
+      maxMemory: jvm.maxMemory,
+      nativesDir
+    });
+    for (const w of pf.warnings) {
+      send('game:log', { level: 'warn', text: `[MC-Next] ${w.message}${w.fix ? ` → ${w.fix}` : ''}` });
+    }
+    if (!pf.ok) {
+      for (const b of pf.blocking) {
+        send('game:log', { level: 'error', text: `[MC-Next] ${b.message} → ${b.fix}` });
+      }
+      return {
+        ok: false,
+        error: pf.summary,
+        issues: pf.issues,
+        preflight: { java: pf.java, memory: pf.memory, natives: pf.natives }
+      };
+    }
+    if (pf.resolvedJavaPath) opts.javaPath = pf.resolvedJavaPath;
+
+    const cp = buildClasspath(vj, { repoRoot: LIBRARIES_DIR, env, gameJarPath: gameJar, extraJars: opts.extraJars || [] });
+
+    // 自动补全缺失依赖（多源降级：官方 → BMCLAPI）
+    for (const m of cp.missing) {
+      if (!m.url) continue;
+      send('game:log', { level: 'info', text: `[MC-Next] 补全依赖 ${m.path}` });
+      await downloadFile(m.url, m.local, { expectedSha1: m.sha1 });
+    }
+
     // 0.6.0 模块三：自动注入真实 GC 日志参数（用户已自行配置 GC 日志时不覆盖）
     const extraJvmArgs = jvm.jvmArgs.slice();
     const hasGcLogging = extraJvmArgs.some(a => /^-Xlog|gc/i.test(a));
@@ -168,11 +217,15 @@ async function launchGameCore(opts) {
       send('game:log', { level: 'info', text: `[MC-Next] 已启用 GC 日志：${extraJvmArgs.slice(jvm.jvmArgs.length).join(' ')}` });
     }
 
+    if (dirSel.isolated) {
+      send('game:log', { level: 'info', text: `[MC-Next] 隔离实例 ${dirSel.instanceId} → ${dirSel.gameDir}` });
+    }
+
     const launcher = new GameLauncher({
       versionJson: vj,
       classpath: cp.classpath.join(process.platform === 'win32' ? ';' : ':'),
-      nativesDir: path.join(LAUNCHER_DIR, 'natives', opts.versionId),
-      gameDir: GAME_DIR,
+      nativesDir,
+      gameDir: dirSel.gameDir,
       assetsDir: ASSETS_DIR,
       assetIndexId: vj.assetIndex ? vj.assetIndex.id : 'legacy',
       javaPath: opts.javaPath || 'java',
@@ -185,11 +238,41 @@ async function launchGameCore(opts) {
       extraJvmArgs,
       env
     });
+    // 0.7.0 模块四：崩溃守护 + 进程树登记。
+    // 守护器只报「人类能看懂」的致命报告；接管进程由下方 fatal 回调执行。
+    const guardian = new crashGuardian.CrashGuardian();
+    launcher._guardian = guardian; // 绑定生命周期，供 game:stop 标记主动停止
+    guardian.on('fatal', (report) => {
+      send('game:crash', report);
+      // 主动接管：致命错误出现后不等游戏自己退出，直接终止整棵进程树，
+      // 避免卡在「启动中」或留下失控的 Java 进程。kill() 内部标记 intentional，不重复弹窗。
+      if (state.game && state.game.running) {
+        send('game:log', { level: 'error', text: `[MC-Next] 检测到致命错误，已主动接管并终止进程：${report.title}` });
+        state.game.kill().catch(() => {});
+      }
+    });
     launcher.on('log', l => send('game:log', l));
-    launcher.on('exit', r => { state.game = null; send('game:exit', r); });
+    const detachGuardian = guardian.attach(launcher);
+
+    launcher.on('exit', r => {
+      // 兜底：即使流式阶段没命中，异常退出也必须给前端报告（finish 内部去重/判正常退出）。
+      guardian.finish(r);
+      detachGuardian();
+      state.game = null;
+      if (jvmMonitor) { jvmMonitor.stop(); jvmMonitor = null; }
+      // 僵尸进程清理：主进程已退出，回收可能残留的 Java 子进程（进程组）。
+      if (launcher.process && launcher.process.pid) {
+        crashReaper.killTree({ child: launcher.process, pid: launcher.process.pid, signal: 'SIGKILL', force: true });
+        processRegistry.untrack(launcher.process.pid);
+      }
+      send('game:exit', r);
+    });
     launcher.on('error', e => send('game:log', { level: 'error', text: String(e) }));
     state.game = launcher;
     launcher.launch();
+    if (launcher.process && launcher.process.pid) {
+      processRegistry.track(launcher.process.pid, 'java', { versionId: opts.versionId });
+    }
 
     // 0.6.0 模块三：挂载 JVM 监控。GameLauncher 已把 stdout/stderr 汇成 log 事件，
     // 监控器逐行解析 GC 日志，并按 1s 采样 /proc/<pid>/status 的 VmRSS 推给性能小雷达。
@@ -198,7 +281,10 @@ async function launchGameCore(opts) {
     jvmMonitor.on('sample', (s) => send('jvm:metrics', s));
     jvmMonitor.attach(launcher);
 
-    return { ok: true, missingCount: cp.missing.length, monitorPid: jvmMonitor.pid };
+    return {
+      ok: true, missingCount: cp.missing.length, monitorPid: jvmMonitor.pid,
+      instanceId: dirSel.instanceId, gameDir: dirSel.gameDir, isolated: dirSel.isolated
+    };
   } catch (e) {
     return { ok: false, error: e.message };
   }
@@ -210,22 +296,19 @@ function registerIpc(mainWindow) {
   // ---------- 本地仓库 ----------
   handle('repo:listClients', async () => {
     try {
-      return fs.readdirSync(REPO_CLIENT).filter(f => f.endsWith('.jar')).sort().reverse();
+      return (await fsp.readdir(REPO_CLIENT)).filter(f => f.endsWith('.jar')).sort().reverse();
     } catch { return []; }
   });
 
   handle('repo:listServers', async () => {
     try {
-      return fs.readdirSync(REPO_SERVER).filter(f => f.endsWith('.jar')).sort().reverse();
+      return (await fsp.readdir(REPO_SERVER)).filter(f => f.endsWith('.jar')).sort().reverse();
     } catch { return []; }
   });
 
   handle('repo:listLoaderFiles', async (evt, mcVersion) => {
-    const out = [];
     const dir = path.join('/workspace/模组加载器', mcVersion);
-    if (!fs.existsSync(dir)) return out;
-    for (const f of fs.readdirSync(dir)) out.push(f);
-    return out;
+    try { return await fsp.readdir(dir); } catch { return []; }
   });
 
   // ---------- 版本清单 ----------
@@ -235,10 +318,11 @@ function registerIpc(mainWindow) {
 
   handle('version:getJson', async (evt, versionId) => {
     const cache = path.join(LAUNCHER_DIR, 'versions', `${versionId}.json`);
-    fs.mkdirSync(path.dirname(cache), { recursive: true });
-    if (fs.existsSync(cache)) return JSON.parse(fs.readFileSync(cache, 'utf8'));
+    await fsp.mkdir(path.dirname(cache), { recursive: true });
+    // 缓存命中直接返回；缺失或损坏（read/parse 抛错）则回落网络，语义比 existsSync 更健壮
+    try { return JSON.parse(await fsp.readFile(cache, 'utf8')); } catch { /* 走网络重新拉取 */ }
     const j = await fetchJson(`https://bmclapi2.bangbang93.com/version/${versionId}/json`, { timeoutMs: 30000 });
-    fs.writeFileSync(cache, JSON.stringify(j));
+    await fsp.writeFile(cache, JSON.stringify(j));
     return j;
   });
 
@@ -260,11 +344,68 @@ function registerIpc(mainWindow) {
     }
   });
 
+  // ===== 0.9.0 模块一B：节点智能测速 + 多线程并发下载 / 断点续传 =====
+  // 测速：真实并发探测官方 / BMCLAPI 延迟，返回排序结果；无公网时如实报错，不伪造延迟。
+  handle('download:benchmark', async (evt, o = {}) => {
+    const urls = o.urls && o.urls.length ? o.urls : speedtest.nodeCandidates(o.url || '', o.extraUrls);
+    const r = await speedtest.rankNodes(urls, { timeoutMs: o.timeoutMs || 4000 });
+    return {
+      ok: r.ok, results: r.results, winner: r.winner ? { url: r.winner.url, id: r.winner.id, name: r.winner.name, latencyMs: r.winner.latencyMs } : null,
+      cached: r.cached, error: r.error || null,
+      note: r.ok ? '真实并发探测延迟，按最快节点排序' : '所有节点不可用（沙盒可能无公网），不伪造延迟'
+    };
+  });
+
+  // 智能下载：测速选最快 → 并发分块（含断点续传 + 整体 sha1）→ 不支持/失败时回退既有单连接多源降级。
+  handle('download:smart', async (evt, o = {}) => {
+    const { id, url, dest, sha1 } = o;
+    if (!url || !dest) return { ok: false, error: '缺少 url 或 dest' };
+    let bench = null;
+    let chosenUrl = url;
+    if (o.benchmark !== false) {
+      try {
+        bench = await speedtest.pickFastestNode(url, { timeoutMs: o.timeoutMs || 4000 });
+        if (bench.benchmarked && bench.chosenUrl) chosenUrl = bench.chosenUrl;
+      } catch { /* 测速失败不阻断下载，回落原 URL */ }
+    }
+    // 优先并发分块（大文件显著提速）
+    if (o.parallel !== false) {
+      const p = await parallelDownload.downloadParallel(chosenUrl, dest, {
+        expectedSha1: sha1, concurrency: o.concurrency || 4,
+        onProgress: undefined
+      });
+      if (p.ok) {
+        send('download:done', { id, sha1: p.sha1, size: p.size, mode: 'parallel', chunks: p.chunks });
+        return { ok: true, ...p, mode: 'parallel', usedUrl: chosenUrl, benchmarked: !!(bench && bench.benchmarked) };
+      }
+      // fallback（不支持 Range / 小文件）或分块失败 → 回退既有真实单连接多源降级链
+      if (!p.fallback) {
+        send('download:retry', { id, url, switched: true, attempt: 0, maxAttempts: 1, delayMs: 0, error: `并发下载回退: ${p.error}` });
+      }
+    }
+    try {
+      const r = await downloadFile(chosenUrl, dest, {
+        expectedSha1: sha1, preferMirror: true,
+        onRetry: (info) => send('download:retry', { id, ...info }),
+        onProgress: (received, total) => send('download:progress', { id, received, total })
+      });
+      send('download:done', { id, sha1: r.sha1, size: r.size, mode: 'single' });
+      return { ok: true, ...r, mode: 'single', usedUrl: chosenUrl, benchmarked: !!(bench && bench.benchmarked) };
+    } catch (e) {
+      send('download:error', { id, error: e.message });
+      return { ok: false, error: e.message };
+    }
+  });
+
   // ---------- 游戏启动 ----------
   handle('game:launch', async (evt, opts) => launchGameCore(opts));
 
   handle('game:stop', async () => {
-    if (state.game) { await state.game.kill(); state.game = null; return { ok: true }; }
+    if (state.game) {
+      // 用户主动停止：先标记守护器，避免 TERM 退出被误判成崩溃弹窗。
+      if (state.game._guardian) state.game._guardian.markIntentional();
+      await state.game.kill(); state.game = null; return { ok: true };
+    }
     return { ok: false, error: '无运行中的游戏' };
   });
 
@@ -371,23 +512,40 @@ function registerIpc(mainWindow) {
   handle('instance:info', async (evt, id) => isolation.instanceInfo(LAUNCHER_DIR, id));
   handle('instance:args', async (evt, id, extras) =>
     isolation.buildInstanceArgs(LAUNCHER_DIR, id, extras || {}));
-  handle('instance:remove', async (evt, id) => isolation.removeInstance(LAUNCHER_DIR, id));
+  handle('instance:remove', async (evt, id) => {
+    const r = isolation.removeInstance(LAUNCHER_DIR, id);
+    // 若删除的是当前激活实例，清掉激活态并广播，避免 UI 停留在一个不存在的实例
+    if (r && isolation.getActiveInstance(LAUNCHER_DIR) === id) {
+      try { await fsp.rm(path.join(LAUNCHER_DIR, isolation.ACTIVE_FILE), { force: true }); } catch {}
+      send('instance:changed', { activeId: null, removed: true });
+    }
+    return r;
+  });
+  // ===== 0.9.0 模块一A：激活实例 / 一键切换 / 隔离自检 =====
+  handle('instance:active', async () => isolation.getActiveInstance(LAUNCHER_DIR));
+  handle('instance:switch', async (evt, id) => {
+    const r = isolation.switchInstance(LAUNCHER_DIR, id);
+    if (r.ok) send('instance:changed', { activeId: r.to, from: r.from });
+    return r;
+  });
+  handle('instance:verify', async (evt, { idA, idB } = {}) =>
+    isolation.verifyIsolation(LAUNCHER_DIR, idA, idB));
 
   // ============ 0.6.0 模块二：微软正版 OAuth2 设备码真流程 + Authlib-Injector ============
   const ms = authFlow.authenticator;   // 复用同一账号仓库（launchArgs / remove / ensureValid）
   const authlibFile = path.join(LAUNCHER_DIR, 'accounts-authlib.json');
-  const readAuthlib = () => {
-    try { return JSON.parse(fs.readFileSync(authlibFile, 'utf8')); } catch { return []; }
+  const readAuthlib = async () => {
+    try { return JSON.parse(await fsp.readFile(authlibFile, 'utf8')); } catch { return []; }
   };
-  const writeAuthlib = (list) => {
-    fs.mkdirSync(LAUNCHER_DIR, { recursive: true });
-    fs.writeFileSync(authlibFile, JSON.stringify(list, null, 2), { mode: 0o600 });
+  const writeAuthlib = async (list) => {
+    await fsp.mkdir(LAUNCHER_DIR, { recursive: true });
+    await fsp.writeFile(authlibFile, JSON.stringify(list, null, 2), { mode: 0o600 });
   };
 
   handle('auth:list', async () => {
     // 只回传展示所需字段，令牌永不出主进程
     const microsoft = authFlow.list();
-    const third = readAuthlib().map(a => ({ ...a, type: 'authlib', hasRefresh: false }));
+    const third = (await readAuthlib()).map(a => ({ ...a, type: 'authlib', hasRefresh: false }));
     return [...microsoft, ...third];
   });
 
@@ -405,22 +563,22 @@ function registerIpc(mainWindow) {
 
   handle('auth:authlibLogin', async (evt, { apiRoot, username, password }) => {
     const account = await authlib.authenticate(apiRoot, { username, password });
-    const list = readAuthlib().filter(a => !(a.uuid === account.uuid && a.apiRoot === apiRoot));
+    const list = (await readAuthlib()).filter(a => !(a.uuid === account.uuid && a.apiRoot === apiRoot));
     list.push(account);
-    writeAuthlib(list);
+    await writeAuthlib(list);
     return { uuid: account.uuid, name: account.name, type: 'authlib', apiRoot };
   });
 
   handle('auth:authlibMeta', async (evt, apiRoot) => authlib.fetchMetadata(apiRoot));
   handle('auth:remove', async (evt, uuid) => {
     ms.deleteAccount(uuid);
-    writeAuthlib(readAuthlib().filter(a => a.uuid !== uuid));
+    await writeAuthlib((await readAuthlib()).filter(a => a.uuid !== uuid));
     return { ok: true };
   });
   handle('auth:launchArgs', async (evt, uuid) => {
     const a = ms.listAccounts().find(x => x.uuid === uuid);
     if (a) return msAuth.toLaunchArgs(await ms.ensureValid(a));
-    const b = readAuthlib().find(x => x.uuid === uuid);
+    const b = (await readAuthlib()).find(x => x.uuid === uuid);
     if (b) return authlib.toLaunchArgs(b);
     throw new Error('账号不存在');
   });
@@ -511,8 +669,10 @@ function registerIpc(mainWindow) {
   });
   handle('crash:readLatestLog', async (evt, gameDir) => {
     const p = path.join(gameDir || GAME_DIR, 'logs', 'latest.log');
-    if (!fs.existsSync(p)) return { ok: false, error: `未找到 ${p}` };
-    return { ok: true, path: p, text: fs.readFileSync(p, 'utf8') };
+    try {
+      const text = await fsp.readFile(p, 'utf8');
+      return { ok: true, path: p, text };
+    } catch { return { ok: false, error: `未找到 ${p}` }; }
   });
 
   // ==================== 移动端启动配置导出（供原生 APK 的 launch.json） ====================
@@ -523,7 +683,7 @@ function registerIpc(mainWindow) {
     });
     if (r.canceled) return { ok: false, error: '已取消' };
     const dest = path.join(r.filePaths[0], 'launch.json');
-    fs.writeFileSync(dest, JSON.stringify(cfg, null, 2));
+    await fsp.writeFile(dest, JSON.stringify(cfg, null, 2));
     return { ok: true, path: dest };
   });
 
@@ -685,7 +845,7 @@ function registerIpc(mainWindow) {
     });
     if (r.canceled || !r.filePaths[0]) return { ok: false, error: '已取消' };
     try {
-      const buf = fs.readFileSync(r.filePaths[0]);
+      const buf = await fsp.readFile(r.filePaths[0]);
       const info = appearance.inspectBackgroundImage(buf);
       if (!info.ok) return { ok: false, error: info.error };
       return { ok: true, ...info, sourceName: path.basename(r.filePaths[0]) };
@@ -757,5 +917,6 @@ function registerIpc(mainWindow) {
 
 module.exports = {
   registerIpc, state, launchGameCore, logBuf, pushLog, send,
-  dispatchChannel, hasChannel, HANDLERS
+  dispatchChannel, hasChannel, HANDLERS,
+  reapAllProcesses   // 0.7.0 模块四：主进程退出前兜底回收所有子进程
 };

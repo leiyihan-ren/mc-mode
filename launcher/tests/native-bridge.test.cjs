@@ -157,10 +157,12 @@ test('未知 channel 不触达原生桥，原生桥异常/坏格式都返回 ok:
 });
 
 test('事件：native 事件真实订阅并解析 payload；remote 事件不伪造数据', async () => {
-  const warns = [];
-  const { createNativeApi } = loadPolyfill({ console: { warn: (m) => warns.push(m) } });
+  // 0.7.0 模块一：不再用 console.warn，改为可注入回调，控制台零噪声且行为可断言
+  const unsupported = [];
+  const onUnsupportedEvent = (channel) => unsupported.push(channel);
+  const { createNativeApi } = loadPolyfill();
   const { bridge, calls } = fakeBridge();
-  const api = createNativeApi({ bridge, getPc: () => '' });
+  const api = createNativeApi({ bridge, getPc: () => '', onUnsupportedEvent });
 
   const got = [];
   const off = api.onGameLog(l => got.push(l));
@@ -173,7 +175,7 @@ test('事件：native 事件真实订阅并解析 payload；remote 事件不伪�
 
   const off2 = api.onDownloadProgress(() => {});
   assert.equal(typeof off2, 'function');
-  assert.ok(warns.some(w => w.includes('不伪造数据')));
+  assert.deepEqual(unsupported, ['download:progress']);
   assert.equal(calls.filter(c => c.listener === 'download:progress').length, 0);
 });
 

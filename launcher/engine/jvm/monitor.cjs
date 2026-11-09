@@ -16,7 +16,47 @@ const appearance = require('../appearance.cjs');
 
 const MAX_SAMPLES = 180;
 
-/** 把 24M / 65536K / 2G 解析成 MB */
+/**
+ * @typedef {Object} GcEvent 一行真实 GC 日志解析结果
+ * @property {number|null} gcId GC 序号（JDK9+ GC(n)）
+ * @property {'full'|'young'|'mixed'|null} kind GC 类型
+ * @property {string|null} cause 触发原因（Allocation Failure / G1 Evacuation Pause …）
+ * @property {number} heapBeforeMb GC 前堆占用 (MB)
+ * @property {number} heapAfterMb GC 后堆占用 (MB)
+ * @property {number} heapMaxMb 堆上限 (MB)
+ * @property {number} pauseMs 停顿时长 (ms)
+ * @property {string} raw 原始日志行
+ */
+
+/**
+ * @typedef {Object} JvmSample 一次定时采样
+ * @property {number} t 时间戳 (ms)
+ * @property {number|null} rssMb 进程常驻内存 (MB)；非 Linux 无 /proc 时为 null（不伪造）
+ * @property {number|null} heapAfterMb 最近一次 GC 后堆占用
+ * @property {number|null} heapMaxMb 堆上限
+ * @property {number} gcCount 累计 GC 次数
+ * @property {number|null} gcPauseMs 最近一次 GC 停顿
+ * @property {boolean} running 游戏进程是否仍在运行
+ */
+
+/**
+ * @typedef {Object} JvmRecommend 一键调优结果
+ * @property {boolean} ok 生成参数是否通过校验（无 error 级 issue）
+ * @property {number} totalMemMb 物理内存 (MB)
+ * @property {string} minMemory -Xms 值（如 "4096M"）
+ * @property {string} maxMemory -Xmx 值
+ * @property {string} profileId 采用的 G1GC 预设 id
+ * @property {string[]} args 完整 JVM 参数数组（可直接写入启动指令）
+ * @property {string} argsText 参数文本（换行分隔）
+ * @property {Array<{severity:string}>} issues 校验问题列表
+ * @property {number} ratio 分配比例
+ * @property {string[]} notes 人类可读说明
+ */
+
+/** 把 24M / 65536K / 2G 解析成 MB
+ * @param {string} s 带单位的大小字符串
+ * @returns {number|null} MB 数值；非法输入返回 null
+ */
 function parseSizeMb(s) {
   const m = /^(\d+(?:\.\d+)?)([KMGkmg])?B?$/.exec(String(s || '').trim());
   if (!m) return null;
@@ -31,7 +71,9 @@ function parseSizeMb(s) {
  * 解析一行真实 JVM GC 日志，覆盖两种主流格式：
  *  JDK9+  (-Xlog:gc*): [0.123s][info][gc] GC(0) Pause Young (G1 Evacuation Pause) 24M->8M(256M) 3.456ms
  *  JDK8   (-verbose:gc): [GC (Allocation Failure)  65536K->8192K(251392K), 0.0123456 secs]
- * 非 GC 行返回 null。
+ * 非 GC 行返回 null（不伪造数据）。
+ * @param {string} raw 单行日志
+ * @returns {GcEvent|null} 解析结果，非 GC 行为 null
  */
 function parseGcLogLine(raw) {
   const line = String(raw || '');
@@ -78,6 +120,9 @@ function gcArgsForMcVersion(versionId) {
  * 根据物理内存生成「极客一键调优」参数。
  * 分配策略：≤4G 取 35%、≤8G 取 45%、更大取 50%，按 256MB 对齐，下限 1G，上限 16G。
  * 参数复用 appearance.G1_BASE（Aikar 系 G1GC），大内存追加 G1HeapRegionSize。
+ * @param {number} totalMemBytes 物理内存字节数（os.totalmem()）
+ * @param {{maxCapMb?:number, sameXms?:boolean}} [opts] 上限与 Xms 策略
+ * @returns {JvmRecommend} 可直接写入启动指令的调优结果
  */
 function recommendJvm(totalMemBytes, opts = {}) {
   const totalMb = Math.max(512, Math.floor(Number(totalMemBytes) / 1048576));
@@ -119,7 +164,12 @@ function recommendJvm(totalMemBytes, opts = {}) {
   };
 }
 
-/** 真实读取 Linux 进程常驻内存（VmRSS，kB）；非 Linux 明确返回 null */
+/**
+ * 真实读取 Linux 进程常驻内存（VmRSS，kB）；非 Linux 明确返回 null（不编造数值）。
+ * @param {number} pid 进程 id
+ * @param {string} [platform] 平台（可注入，便于单测）
+ * @returns {number|null} VmRSS (kB)，不可用时 null
+ */
 function readRssKb(pid, platform = process.platform) {
   if (!pid || platform !== 'linux') return null;
   try {

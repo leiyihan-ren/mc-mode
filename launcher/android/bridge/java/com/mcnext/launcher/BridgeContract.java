@@ -18,6 +18,8 @@ public final class BridgeContract {
         "manifest:fetch",
         "version:getJson",
         "download:start",
+        "download:benchmark",
+        "download:smart",
         "game:launch",
         "game:stop",
         "game:status",
@@ -35,6 +37,9 @@ public final class BridgeContract {
         "instance:info",
         "instance:args",
         "instance:remove",
+        "instance:active",
+        "instance:switch",
+        "instance:verify",
         "auth:list",
         "auth:deviceStart",
         "auth:deviceBegin",
@@ -117,8 +122,10 @@ public final class BridgeContract {
         "download:error",
         "game:log",
         "game:exit",
+        "game:crash",
         "server:log",
         "server:exit",
+        "instance:changed",
         "auth:deviceStatus",
         "download:batch",
         "modpack:progress",
@@ -144,7 +151,8 @@ public final class BridgeContract {
 
     public static final String[] NATIVE_EVENTS = {
         "game:log",
-        "game:exit"
+        "game:exit",
+        "game:crash"
     };
 
     private static final Set<String> INVOKE_SET = new HashSet<>(Arrays.asList(INVOKE_CHANNELS));

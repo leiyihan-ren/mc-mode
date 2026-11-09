@@ -6,6 +6,7 @@
  * （gh-proxy.com，实测对这四个 asset 均返回 206 可下载），官方直链作为备用同时展示。
  */
 import cfg from '../../config/release.json'
+import { api } from '@/services'
 
 const base = `${cfg.repo}/releases/download/${cfg.tag}`
 const mirror = (url) => (cfg.mirror ? cfg.mirror + url : url)
@@ -28,11 +29,10 @@ export const RELEASE = {
   mirrorPrefix: cfg.mirror || ''
 }
 
-/** 用系统浏览器/外部打开（Electron 里由 shell.openExternal 处理，浏览器里直接 window.open） */
+/** 用系统浏览器/外部打开（统一走 Service 门面；底层不可用时降级到 window.open） */
 export function openDownload(url) {
-  if (window.mcnext && typeof window.mcnext.openExternal === 'function') {
-    window.mcnext.openExternal(url)
-  } else {
-    window.open(url, '_blank', 'noopener,noreferrer')
-  }
+  const fallback = () => window.open(url, '_blank', 'noopener,noreferrer')
+  if (!api.isAvailable()) { fallback(); return }
+  // Service 门面返回 Promise：拒绝时降级，绝不产生未捕获异常或卡死按钮
+  Promise.resolve(api.openExternal(url)).catch(fallback)
 }

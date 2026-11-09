@@ -92,6 +92,15 @@ public class TouchOverlay extends View {
         return null;
     }
 
+    /** 0.7.0 模块三：View 被移除（切页 / 崩溃重建）时也必须归零按键状态 */
+    @Override protected void onDetachedFromWindow() {
+        if (mapper != null) mapper.releaseAll();
+        InputBridge.releaseAllHeld();
+        joystickPointer = -1;
+        lookPointer = -1;
+        super.onDetachedFromWindow();
+    }
+
     @Override public boolean onTouchEvent(MotionEvent e) {
         if (mapper == null) return true;
         int action = e.getActionMasked();

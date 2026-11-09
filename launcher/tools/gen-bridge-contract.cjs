@@ -53,8 +53,8 @@ const NATIVE_CHANNELS = [
   // 模块五：Android 端本地做热更新检查 / 打开下载页（不静默安装 APK）
   'update:check', 'update:download'
 ];
-/** 安卓本地真实产生的事件（JVM 日志 / 退出），其余事件由远程通道转发 */
-const NATIVE_EVENTS = ['game:log', 'game:exit'];
+/** 安卓本地真实产生的事件（JVM 日志 / 退出 / 致命崩溃报告），其余事件由远程通道转发 */
+const NATIVE_EVENTS = ['game:log', 'game:exit', 'game:crash'];
 
 for (const c of NATIVE_CHANNELS) {
   if (!INVOKE_CHANNELS.includes(c)) throw new Error(`NATIVE_CHANNELS 含不存在的 channel: ${c}`);
